@@ -27,12 +27,15 @@ import { ConcordId } from '../../../api/common';
 
 import './styles.css';
 import { formatDistance, parseISO } from 'date-fns';
+import { getStatusSemanticColor, getStatusSemanticIcon, ProcessStatus } from '../../../api/process';
+import { Link, useLocation } from 'react-router-dom';
 
 interface Props {
     instanceId: ConcordId;
     segmentId: number;
     name: string;
     createdAt: string;
+    processStatus?: ProcessStatus;
     status?: SegmentStatus;
     lowRange?: number;
     warnings?: number;
@@ -50,6 +53,7 @@ const LogSegment = ({
     segmentId,
     name,
     createdAt,
+    processStatus,
     status,
     lowRange,
     warnings,
@@ -62,10 +66,25 @@ const LogSegment = ({
     open
 }: Props) => {
     const scrollAnchorRef = useRef<HTMLDivElement>(null);
-
+    const location = useLocation();
     const [isOpen, setOpen] = useState<boolean>(!!open);
     const [isLoadAll, setLoadAll] = useState<boolean>(false);
     const [isAutoScroll, setAutoScroll] = useState<boolean>(false);
+
+    const baseUrl = `/process/${instanceId}/log`;
+
+    const myRef = useRef<null | HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (myRef.current && location.hash.includes(`#segmentId=${segmentId}`)) {
+            myRef.current.scrollIntoView({
+                behavior: 'smooth',
+                block: 'end',
+                inline: 'nearest'
+            });
+            setOpen(true);
+        }
+    }, [myRef, segmentId, location]);
 
     const loadAllClickHandler = useCallback((ev: React.MouseEvent<any>) => {
         ev.preventDefault();
@@ -113,7 +132,7 @@ const LogSegment = ({
     }
 
     return (
-        <div className="LogSegment">
+        <div className="LogSegment" id={`segmentId=${segmentId}`} ref={myRef}>
             <Button
                 fluid={true}
                 size="medium"
@@ -121,7 +140,12 @@ const LogSegment = ({
                 onClick={() => setOpen((prevState) => !prevState)}>
                 <Icon name={isOpen ? 'caret down' : 'caret right'} className="State" />
 
-                <StatusIcon status={status} warnings={warnings} errors={errors} />
+                <StatusIcon
+                    status={status}
+                    processStatus={processStatus}
+                    warnings={warnings}
+                    errors={errors}
+                />
 
                 <span className="Caption">{name}</span>
 
@@ -134,19 +158,32 @@ const LogSegment = ({
 
                 {beenRunningFor && <span className="RunningFor">running for {beenRunningFor}</span>}
 
+                <Link
+                    to={`${baseUrl}#segmentId=${segmentId}`}
+                    className="AdditionalAction Anchor"
+                    data-tooltip="Hyperlink"
+                    data-inverted="">
+                    <Icon name="linkify" />
+                </Link>
+
                 <a
                     href={`/api/v2/process/${instanceId}/log/segment/${segmentId}/data`}
                     onClick={(event) => event.stopPropagation()}
                     rel="noopener noreferrer"
                     target="_blank"
-                    title="Pop out"
-                    className="AdditionalAction Last">
-                    <Icon name="external alternate" />
+                    className="AdditionalAction Last"
+                    data-tooltip="Download Log File"
+                    data-inverted="">
+                    <Icon name="download" />
                 </a>
 
                 {onSegmentInfo !== undefined && (
-                    <div className={'AdditionalAction'}>
-                        <Icon name={'info'} title={'Show info'} onClick={segmentInfoClickHandler} />
+                    <div className={'AdditionalAction'} data-tooltip="Show Info" data-inverted="">
+                        <Icon
+                            name={'info circle'}
+                            title={'Show info'}
+                            onClick={segmentInfoClickHandler}
+                        />
                     </div>
                 )}
 
@@ -155,14 +192,20 @@ const LogSegment = ({
                         <div className="AdditionalAction">
                             <div
                                 className={isAutoScroll ? 'on' : 'off'}
-                                onClick={autoscrollClickHandler}>
-                                Auto Scroll
+                                data-tooltip="Auto Scroll"
+                                data-inverted="">
+                                <Icon name={'angle double down'} onClick={autoscrollClickHandler} />
                             </div>
                         </div>
-
                         <div className="AdditionalAction">
-                            <div className={isLoadAll ? 'on' : 'off'} onClick={loadAllClickHandler}>
-                                Load All
+                            <div
+                                className={isLoadAll ? 'on' : 'off'}
+                                data-tooltip="Show Full Log"
+                                data-inverted="">
+                                <Icon
+                                    name={'arrows alternate vertical'}
+                                    onClick={loadAllClickHandler}
+                                />
                             </div>
                         </div>
                     </>
@@ -198,14 +241,27 @@ const LogSegment = ({
 
 interface StatusIconProps {
     status?: SegmentStatus;
+    processStatus?: ProcessStatus;
     loading?: boolean;
     warnings?: number;
     errors?: number;
 }
 
-const StatusIcon = ({ status, warnings = 0, errors = 0 }: StatusIconProps) => {
+const StatusIcon = ({ status, processStatus, warnings = 0, errors = 0 }: StatusIconProps) => {
     if (!status) {
-        return <span className="EmptyStatus" />;
+        return (
+            <Icon
+                loading={
+                    processStatus !== ProcessStatus.FAILED &&
+                    processStatus !== ProcessStatus.FINISHED &&
+                    processStatus !== ProcessStatus.CANCELLED &&
+                    processStatus !== ProcessStatus.TIMED_OUT
+                }
+                name={processStatus ? getStatusSemanticIcon(processStatus) : 'circle'}
+                color={processStatus ? getStatusSemanticColor(processStatus) : 'grey'}
+                className="Status"
+            />
+        );
     }
 
     let color: SemanticCOLORS = 'green';
@@ -213,6 +269,7 @@ const StatusIcon = ({ status, warnings = 0, errors = 0 }: StatusIconProps) => {
     let spinning = false;
 
     if (status === SegmentStatus.RUNNING) {
+        color = 'teal';
         icon = 'spinner';
         spinning = true;
     } else if (status === SegmentStatus.FAILED) {
@@ -225,7 +282,6 @@ const StatusIcon = ({ status, warnings = 0, errors = 0 }: StatusIconProps) => {
         color = 'red';
         icon = 'exclamation circle';
     }
-
     return <Icon loading={spinning} name={icon} color={color} className="Status" />;
 };
 

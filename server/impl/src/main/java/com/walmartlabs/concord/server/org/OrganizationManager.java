@@ -20,6 +20,8 @@ package com.walmartlabs.concord.server.org;
  * =====
  */
 
+import com.walmartlabs.concord.server.Locks;
+import com.walmartlabs.concord.server.OperationResult;
 import com.walmartlabs.concord.server.audit.AuditAction;
 import com.walmartlabs.concord.server.audit.AuditLog;
 import com.walmartlabs.concord.server.audit.AuditObject;
@@ -41,6 +43,7 @@ import com.walmartlabs.concord.server.user.UserManager;
 import com.walmartlabs.concord.server.user.UserType;
 import org.apache.shiro.authz.AuthorizationException;
 import org.apache.shiro.authz.UnauthorizedException;
+import org.jooq.DSLContext;
 import org.sonatype.siesta.ValidationErrorsException;
 
 import javax.inject.Inject;
@@ -59,6 +62,7 @@ public class OrganizationManager {
     private final OrganizationDao orgDao;
     private final TeamDao teamDao;
     private final UserManager userManager;
+    private final Locks locks;
     private final AuditLog auditLog;
 
     @Inject
@@ -66,42 +70,107 @@ public class OrganizationManager {
                                OrganizationDao orgDao,
                                TeamDao teamDao,
                                UserManager userManager,
+                               Locks locks,
                                AuditLog auditLog) {
 
         this.policyManager = policyManager;
         this.orgDao = orgDao;
         this.teamDao = teamDao;
         this.userManager = userManager;
+        this.locks = locks;
         this.auditLog = auditLog;
     }
 
-    public UUID create(OrganizationEntry entry) {
+    /**
+     * Creates a new organization or updates an existing one.
+     * <p/>
+     * To update an existing organization, a {@link OrganizationEntry#getId()}
+     * value must be provided.
+     * <p/>
+     * When updating an existing organization, only non-null properties are updated.
+     * E.g. if you wish to update only the org's visibility, set only the ID and the
+     * visibility values.
+     *
+     * @apiNote the method uses DB advisory locks, it is thread-safe across the cluster.
+     */
+    public OrganizationOperationResult createOrUpdate(OrganizationEntry entry) {
+        return orgDao.txResult(tx -> createOrUpdate(tx, entry));
+    }
+
+    /**
+     * @see #createOrUpdate(OrganizationEntry)
+     */
+    public OrganizationOperationResult createOrUpdate(DSLContext tx, OrganizationEntry entry) {
+        // use advisory locks to avoid races
+        locks.lock(tx, "OrganizationManager#createOrX");
+
+        UUID orgId = entry.getId();
+        if (orgId == null) {
+            orgId = orgDao.getId(tx, entry.getName());
+        }
+
+        if (orgId == null) {
+            orgId = create(tx, entry);
+            return OrganizationOperationResult.builder()
+                    .orgId(orgId)
+                    .result(OperationResult.CREATED)
+                    .build();
+        } else {
+            update(tx, orgId, entry);
+            return OrganizationOperationResult.builder()
+                    .orgId(orgId)
+                    .result(OperationResult.UPDATED)
+                    .build();
+        }
+    }
+
+    public OrganizationOperationResult createOrGet(String orgName) {
+        return orgDao.txResult(tx -> createOrGet(tx, orgName));
+    }
+
+    public OrganizationOperationResult createOrGet(DSLContext tx, String orgName) {
+        // use advisory locks to avoid races
+        // TODO optimistic locking as a possible optimization
+        locks.lock(tx, "OrganizationManager#createOrX");
+
+        UUID orgId = orgDao.getId(tx, orgName);
+        if (orgId != null) {
+            return OrganizationOperationResult.builder()
+                    .orgId(orgId)
+                    .result(OperationResult.ALREADY_EXISTS)
+                    .build();
+        }
+
+        orgId = create(tx, new OrganizationEntry(orgName));
+        return OrganizationOperationResult.builder()
+                .orgId(orgId)
+                .result(OperationResult.CREATED)
+                .build();
+    }
+
+    private UUID create(DSLContext tx, OrganizationEntry entry) {
         assertPermission(Permission.CREATE_ORG);
 
         UserEntry owner = getOwner(entry.getOwner(), UserPrincipal.assertCurrent().getUser());
 
         policyManager.checkEntity(null, null, EntityType.ORGANIZATION, EntityAction.CREATE, owner, PolicyUtils.toMap(entry));
 
-        UUID id = orgDao.txResult(tx -> {
-            UUID orgId = orgDao.insert(entry.getName(), owner.getId(), entry.getVisibility(), entry.getMeta(), entry.getCfg());
+        UUID orgId = orgDao.insert(tx, entry.getName(), owner.getId(), entry.getVisibility(), entry.getMeta(), entry.getCfg());
 
-            // ...add the owner user to the default new as an OWNER
-            UUID teamId = teamDao.insert(tx, orgId, TeamManager.DEFAULT_TEAM_NAME, "Default team");
-            teamDao.upsertUser(tx, teamId, owner.getId(), TeamRole.OWNER);
-
-            return orgId;
-        });
+        // ...add the owner user into the default team of the new org
+        UUID teamId = teamDao.insert(tx, orgId, TeamManager.DEFAULT_TEAM_NAME, "Default team");
+        teamDao.upsertUser(tx, teamId, owner.getId(), TeamRole.OWNER);
 
         Map<String, Object> changes = DiffUtils.compare(null, entry);
         addAuditLog(AuditAction.CREATE,
-                id,
+                orgId,
                 entry.getName(),
                 changes);
 
-        return id;
+        return orgId;
     }
 
-    public void update(UUID orgId, OrganizationEntry entry) {
+    private void update(DSLContext tx, UUID orgId, OrganizationEntry entry) {
         OrganizationEntry prevEntry = assertUpdateAccess(orgId);
 
         UserEntry owner = getOwner(entry.getOwner(), null);
@@ -109,7 +178,7 @@ public class OrganizationManager {
         policyManager.checkEntity(orgId, null, EntityType.ORGANIZATION, EntityAction.UPDATE, owner, PolicyUtils.toMap(entry));
 
         UUID ownerId = owner != null ? owner.getId() : null;
-        orgDao.update(orgId, entry.getName(), ownerId, entry.getVisibility(), entry.getMeta(), entry.getCfg());
+        orgDao.update(tx, orgId, entry.getName(), ownerId, entry.getVisibility(), entry.getMeta(), entry.getCfg());
 
         OrganizationEntry newEntry = orgDao.get(orgId);
 
@@ -136,8 +205,12 @@ public class OrganizationManager {
     }
 
     public OrganizationEntry assertExisting(UUID orgId, String orgName) {
+        return orgDao.txResult(tx -> assertExisting(tx, orgId, orgName));
+    }
+
+    public OrganizationEntry assertExisting(DSLContext tx, UUID orgId, String orgName) {
         if (orgId != null) {
-            OrganizationEntry e = orgDao.get(orgId);
+            OrganizationEntry e = orgDao.get(tx, orgId);
             if (e == null) {
                 throw new ValidationErrorsException("Organization not found: " + orgId);
             }
@@ -145,7 +218,7 @@ public class OrganizationManager {
         }
 
         if (orgName != null) {
-            OrganizationEntry e = orgDao.getByName(orgName);
+            OrganizationEntry e = orgDao.getByName(tx, orgName);
             if (e == null) {
                 throw new ValidationErrorsException("Organization not found: " + orgName);
             }
@@ -159,13 +232,22 @@ public class OrganizationManager {
         return assertAccess(orgId, null, orgMembersOnly);
     }
 
+    public OrganizationEntry assertAccess(DSLContext tx, UUID orgId, boolean orgMembersOnly) {
+        return assertAccess(tx, orgId, null, orgMembersOnly);
+    }
+
     public OrganizationEntry assertAccess(String orgName, boolean orgMembersOnly) {
         return assertAccess(null, orgName, orgMembersOnly);
     }
 
     @WithTimer
-    public OrganizationEntry assertAccess(UUID orgId, String name, boolean orgMembersOnly) {
-        OrganizationEntry e = assertExisting(orgId, name);
+    public OrganizationEntry assertAccess(UUID orgId, String orgName, boolean orgMembersOnly) {
+        return orgDao.txResult(tx -> assertAccess(tx, orgId, orgName, orgMembersOnly));
+    }
+
+    @WithTimer
+    public OrganizationEntry assertAccess(DSLContext tx, UUID orgId, String orgName, boolean orgMembersOnly) {
+        OrganizationEntry e = assertExisting(tx, orgId, orgName);
 
         if (Roles.isAdmin()) {
             // an admin can access any organization
@@ -185,7 +267,7 @@ public class OrganizationManager {
         }
 
         if (orgMembersOnly) {
-            if (!userManager.isInOrganization(e.getId())) {
+            if (!userManager.isInOrganization(tx, e.getId())) {
                 throw new UnauthorizedException("The current user (" + p.getUsername() + ") doesn't belong to the specified organization: " + e.getName());
             }
         }

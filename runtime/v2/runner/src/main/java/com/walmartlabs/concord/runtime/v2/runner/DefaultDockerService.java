@@ -20,13 +20,12 @@ package com.walmartlabs.concord.runtime.v2.runner;
  * =====
  */
 
-import com.walmartlabs.concord.common.DockerProcessBuilder;
 import com.walmartlabs.concord.common.TruncBufferedReader;
 import com.walmartlabs.concord.runtime.common.cfg.RunnerConfiguration;
 import com.walmartlabs.concord.runtime.common.injector.InstanceId;
+import com.walmartlabs.concord.runtime.v2.sdk.DockerContainerSpec;
 import com.walmartlabs.concord.runtime.v2.sdk.DockerService;
 import com.walmartlabs.concord.runtime.v2.sdk.WorkingDirectory;
-import com.walmartlabs.concord.sdk.DockerContainerSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +34,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -104,7 +104,7 @@ public class DefaultDockerService implements DockerService {
         // add the default volume - mount the process' workDir as /workspace
         b.volume(workingDirectory.getValue().toString(), WORKSPACE_TARGET_DIR);
         // add extra volumes from the runner's arguments
-        extraVolumes.forEach(volume ->  b.volume(volume));
+        extraVolumes.forEach(volume -> b.volume(volume));
 
         return b.build();
     }
@@ -129,7 +129,7 @@ public class DefaultDockerService implements DockerService {
     }
 
     private static void streamToLog(InputStream in, LogCallback callback) throws IOException {
-        BufferedReader reader = new TruncBufferedReader(new InputStreamReader(in));
+        BufferedReader reader = new TruncBufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         String line;
         while ((line = reader.readLine()) != null) {
             callback.onLog(line);

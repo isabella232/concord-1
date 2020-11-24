@@ -75,7 +75,7 @@ public class ProcessQueueDao extends AbstractDao {
     private static final TypeReference<List<ProcessStatusHistoryEntry>> LIST_OF_STATUS_HISTORY = new TypeReference<List<ProcessStatusHistoryEntry>>() {
     };
 
-    private static final Field<?>[] PROCESS_QUEUE_FIELDS = allFieldsWithFixedMeta();
+    private static final Field<?>[] PROCESS_QUEUE_FIELDS = processEntryFields();
 
     private final ConcordObjectMapper objectMapper;
 
@@ -364,6 +364,14 @@ public class ProcessQueueDao extends AbstractDao {
         }
     }
 
+    public String getRuntime(PartialProcessKey processKey) {
+        try (DSLContext tx = DSL.using(cfg)) {
+            return tx.select(PROCESS_QUEUE.RUNTIME).from(PROCESS_QUEUE)
+                    .where(PROCESS_QUEUE.INSTANCE_ID.eq(processKey.getInstanceId()))
+                    .fetchOne(PROCESS_QUEUE.RUNTIME);
+        }
+    }
+
     public ProcessStatus getStatus(PartialProcessKey processKey) {
         try (DSLContext tx = DSL.using(cfg)) {
             String status = tx.select(PROCESS_QUEUE.CURRENT_STATUS)
@@ -438,6 +446,14 @@ public class ProcessQueueDao extends AbstractDao {
         }
     }
 
+    public Imports getImports(PartialProcessKey processKey) {
+        try (DSLContext tx = DSL.using(cfg)) {
+            return tx.select(PROCESS_QUEUE.IMPORTS).from(PROCESS_QUEUE)
+                    .where(PROCESS_QUEUE.INSTANCE_ID.eq(processKey.getInstanceId()))
+                    .fetchOne(r -> objectMapper.fromJSONB(r.get(PROCESS_QUEUE.IMPORTS), Imports.class));
+        }
+    }
+
     public List<ProcessEntry> list(ProcessFilter filter) {
         try (DSLContext tx = DSL.using(cfg)) {
             SelectQuery<Record> query = buildSelect(tx, filter);
@@ -459,18 +475,23 @@ public class ProcessQueueDao extends AbstractDao {
         }
     }
 
-    public List<ProcessRequirementsEntry> listRequirements(ProcessStatus processStatus, int limit, int offset) {
+    public List<ProcessRequirementsEntry> listRequirements(ProcessStatus processStatus, List<ProcessFilter.DateFilter> startAt, int limit, int offset) {
         try (DSLContext tx = DSL.using(cfg)) {
-            return tx.select(PROCESS_QUEUE.INSTANCE_ID, PROCESS_QUEUE.CREATED_AT, PROCESS_QUEUE.REQUIREMENTS)
-                    .from(PROCESS_QUEUE)
-                    .where(PROCESS_QUEUE.CURRENT_STATUS.eq(processStatus.name()))
-                    .limit(limit)
-                    .offset(offset)
-                    .fetch(r -> ProcessRequirementsEntry.builder()
-                            .instanceId(r.get(PROCESS_QUEUE.INSTANCE_ID))
-                            .createdAt(r.get(PROCESS_QUEUE.CREATED_AT))
-                            .requirements(objectMapper.fromJSONB(r.get(PROCESS_QUEUE.REQUIREMENTS)))
-                            .build());
+            SelectQuery<Record> query = tx.selectQuery();
+
+            query.addSelect(PROCESS_QUEUE.INSTANCE_ID, PROCESS_QUEUE.CREATED_AT, PROCESS_QUEUE.REQUIREMENTS);
+            query.addFrom(PROCESS_QUEUE);
+            query.addConditions(PROCESS_QUEUE.CURRENT_STATUS.eq(processStatus.name()));
+            FilterUtils.applyDate(query, PROCESS_QUEUE.START_AT, startAt);
+
+            query.addLimit(limit);
+            query.addOffset(offset);
+
+            return query.fetch(r -> ProcessRequirementsEntry.builder()
+                    .instanceId(r.get(PROCESS_QUEUE.INSTANCE_ID))
+                    .createdAt(r.get(PROCESS_QUEUE.CREATED_AT))
+                    .requirements(objectMapper.fromJSONB(r.get(PROCESS_QUEUE.REQUIREMENTS)))
+                    .build());
         }
     }
 
@@ -799,7 +820,6 @@ public class ProcessQueueDao extends AbstractDao {
                 .statusHistory(objectMapper.fromJSONB(getOrNull(r, "status_history"), LIST_OF_STATUS_HISTORY))
                 .triggeredBy(objectMapper.fromJSONB(r.get(PROCESS_QUEUE.TRIGGERED_BY), TriggeredByEntry.class))
                 .timeout(r.get(PROCESS_QUEUE.TIMEOUT))
-                .imports(objectMapper.fromJSONB(r.get(PROCESS_QUEUE.IMPORTS), Imports.class))
                 .runtime(r.get(PROCESS_QUEUE.RUNTIME))
                 .build();
     }
@@ -833,11 +853,15 @@ public class ProcessQueueDao extends AbstractDao {
      * Returns an array of all fields of {@link ProcessQueue#PROCESS_QUEUE}, but
      * replaces the meta field with a version with all null values stripped out.
      */
-    private static Field<?>[] allFieldsWithFixedMeta() {
+    private static Field<?>[] processEntryFields() {
         Field<?>[] fields = PROCESS_QUEUE.fields();
 
         List<Field<?>> l = new ArrayList<>(fields.length);
         for (Field<?> f : fields) {
+            if (f == PROCESS_QUEUE.IMPORTS) {
+                continue;
+            }
+
             if (f == PROCESS_QUEUE.META) {
                 l.add(function("jsonb_strip_nulls", JSONB.class, f).as(f));
             } else {

@@ -20,11 +20,9 @@ package com.walmartlabs.concord.runtime.v2.runner.el;
  * =====
  */
 
-import com.walmartlabs.concord.runtime.v2.model.ProcessConfiguration;
+import com.walmartlabs.concord.runtime.v2.sdk.ProcessConfiguration;
 import com.walmartlabs.concord.runtime.v2.sdk.Compiler;
 import com.walmartlabs.concord.runtime.v2.sdk.*;
-import com.walmartlabs.concord.sdk.ApiConfiguration;
-import com.walmartlabs.concord.sdk.ProjectInfo;
 
 import java.io.Serializable;
 import java.nio.file.Path;
@@ -49,7 +47,7 @@ public class DummyContext implements Context {
     }
 
     @Override
-    public ProjectInfo projectInfo() {
+    public Variables defaultVariables() {
         throw new IllegalStateException("Not implemented");
     }
 

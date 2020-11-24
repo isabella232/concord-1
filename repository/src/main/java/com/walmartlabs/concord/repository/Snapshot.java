@@ -31,6 +31,38 @@ import java.nio.file.attribute.BasicFileAttributes;
  */
 public interface Snapshot {
 
+    /**
+     * @param file absolute path
+     */
+    static Snapshot singleFile(Path file) {
+        return new Snapshot() {
+            @Override
+            public boolean isModified(Path path, BasicFileAttributes attrs) {
+                return true;
+            }
+
+            @Override
+            public boolean contains(Path path) {
+                return file.equals(path);
+            }
+        };
+    }
+
+    static Snapshot includeAll() {
+        return new Snapshot() {
+
+            @Override
+            public boolean isModified(Path path, BasicFileAttributes attrs) {
+                return true;
+            }
+
+            @Override
+            public boolean contains(Path path) {
+                return true;
+            }
+        };
+    }
+
     boolean isModified(Path path, BasicFileAttributes attrs);
 
     boolean contains(Path path);

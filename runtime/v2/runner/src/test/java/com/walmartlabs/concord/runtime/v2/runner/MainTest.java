@@ -34,7 +34,7 @@ import com.walmartlabs.concord.runtime.common.cfg.ApiConfiguration;
 import com.walmartlabs.concord.runtime.common.cfg.ImmutableRunnerConfiguration;
 import com.walmartlabs.concord.runtime.common.cfg.LoggingConfiguration;
 import com.walmartlabs.concord.runtime.common.cfg.RunnerConfiguration;
-import com.walmartlabs.concord.runtime.v2.model.ProcessConfiguration;
+import com.walmartlabs.concord.runtime.v2.sdk.ProcessConfiguration;
 import com.walmartlabs.concord.runtime.v2.runner.checkpoints.CheckpointService;
 import com.walmartlabs.concord.runtime.v2.runner.guice.BaseRunnerModule;
 import com.walmartlabs.concord.runtime.v2.runner.logging.LoggingConfigurator;
@@ -43,10 +43,9 @@ import com.walmartlabs.concord.runtime.v2.runner.tasks.TaskCallPolicyChecker;
 import com.walmartlabs.concord.runtime.v2.runner.tasks.TaskResultListener;
 import com.walmartlabs.concord.runtime.v2.runner.tasks.TaskV2Provider;
 import com.walmartlabs.concord.runtime.v2.sdk.*;
-import com.walmartlabs.concord.runtime.v2.v1.compat.V1CompatModule;
 import com.walmartlabs.concord.sdk.Constants;
-import com.walmartlabs.concord.sdk.InjectVariable;
 import com.walmartlabs.concord.svm.ExecutionListener;
+import com.walmartlabs.concord.svm.Runtime;
 import org.immutables.value.Value;
 import org.junit.After;
 import org.junit.Before;
@@ -59,6 +58,7 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import java.io.*;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -66,6 +66,7 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -80,10 +81,12 @@ public class MainTest {
     private ProcessConfiguration processConfiguration;
 
     private ProcessStatusCallback processStatusCallback;
-    private CheckpointService checkpointService;
     private Module testServices;
 
+    private TestCheckpointService checkpointService;
+
     private byte[] lastLog;
+    private byte[] allLogs;
 
     private Path segmentedLogDir;
 
@@ -100,7 +103,8 @@ public class MainTest {
         formService = new FormService(formsDir);
 
         processStatusCallback = mock(ProcessStatusCallback.class);
-        checkpointService = mock(CheckpointService.class);
+
+        checkpointService = spy(new TestCheckpointService());
 
         testServices = new AbstractModule() {
             @Override
@@ -108,12 +112,13 @@ public class MainTest {
                 install(new BaseRunnerModule());
 
                 bind(CheckpointService.class).toInstance(checkpointService);
-                bind(PersistenceService.class).toInstance(mock(PersistenceService.class));
-                bind(ProcessStatusCallback.class).toInstance(processStatusCallback);
+                bind(DependencyManager.class).to(DefaultDependencyManager.class);
                 bind(DockerService.class).to(DefaultDockerService.class);
                 bind(FileService.class).to(DefaultFileService.class);
-                bind(SecretService.class).to(DefaultSecretService.class);
                 bind(LockService.class).to(DefaultLockService.class);
+                bind(PersistenceService.class).toInstance(mock(PersistenceService.class));
+                bind(ProcessStatusCallback.class).toInstance(processStatusCallback);
+                bind(SecretService.class).to(DefaultSecretService.class);
 
                 Multibinder<TaskProvider> taskProviders = Multibinder.newSetBinder(binder(), TaskProvider.class);
                 taskProviders.addBinding().to(TaskV2Provider.class);
@@ -127,6 +132,8 @@ public class MainTest {
         };
 
         segmentedLogDir = Files.createTempDirectory("segmentedLog");
+
+        allLogs = null;
     }
 
     @After
@@ -154,7 +161,6 @@ public class MainTest {
         byte[] log = run();
         assertLog(log, ".*Hello, Concord!.*");
         assertLog(log, ".*" + Pattern.quote("defaultsMap:{a=a-value}") + ".*");
-        assertLog(log, ".*" + Pattern.quote("defaultsTyped:Defaults{a=a-value}") + ".*");
 
         verify(processStatusCallback, times(1)).onRunning(instanceId);
     }
@@ -477,6 +483,39 @@ public class MainTest {
     }
 
     @Test
+    public void testWithItemsOut() throws Exception {
+        deploy("withItemsOut");
+
+        save(ProcessConfiguration.builder()
+                .build());
+
+        byte[] log = run();
+        assertLog(log, ".*result: \\[10, 20, 30\\].*");
+    }
+
+    @Test
+    public void testWithItemsTaskOut() throws Exception {
+        deploy("withItemsTaskOut");
+
+        save(ProcessConfiguration.builder()
+                .build());
+
+        byte[] log = run();
+        assertLog(log, ".*result: \\[10, 20, 30\\].*");
+    }
+
+    @Test
+    public void testWithItemsBlock() throws Exception {
+        deploy("withItemsBlock");
+
+        save(ProcessConfiguration.builder()
+                .build());
+
+        byte[] log = run();
+        assertLog(log, ".*result: \\[10, 20, 30\\].*");
+    }
+
+    @Test
     public void testUnknownMethod() throws Exception {
         deploy("unknownMethod");
 
@@ -592,17 +631,6 @@ public class MainTest {
     }
 
     @Test
-    public void testV1Compat() throws Exception {
-        deploy("v1Compat");
-
-        save(ProcessConfiguration.builder().build());
-
-        byte[] log = run();
-        assertLog(log, ".*execute: p1=ABC.*");
-        assertLog(log, ".*" + Pattern.quote("result: {result=abc}") + ".*");
-    }
-
-    @Test
     public void testVarScoping() throws Exception {
         deploy("varScoping");
 
@@ -652,17 +680,97 @@ public class MainTest {
     @Test
     public void testReentrant() throws Exception {
         deploy("reentrantTask");
-        String actionName = "BOO";
-
         save(ProcessConfiguration.builder()
-                .putArguments("actionName", actionName)
+                .putArguments("actionName", "boo")
                 .build());
 
         byte[] log = run();
-        assertLog(log, ".*Before.*");
+        assertLog(log, ".*execute \\{action=boo\\}.*");
 
         log = resume(ReentrantTaskExample.EVENT_NAME, ProcessConfiguration.builder().build());
-        assertLog(log, ".*After: " + Pattern.quote("k=v, a=b") + ".*");
+        assertLog(log, ".*result.ok: true.*");
+        assertLog(log, ".*result.action: boo.*");
+        assertLog(log, ".*result.k: v.*");
+    }
+
+    @Test
+    public void testNestedSet() throws Exception {
+        Map<String, Object> x = new HashMap<>();
+        x.put("z", 234);
+
+        deploy("nestedSet");
+        save(ProcessConfiguration.builder()
+                .putArguments("x", x)
+                .build());
+
+        byte[] log = run();
+        assertLog(log, ".*x: .*y=123.*");
+        assertLog(log, ".*x: .*z=234.*");
+        assertLog(log, ".*x: .*taskOut=42.*");
+
+        // TODO support for partial eval results?
+        assertLog(log, ".*x: .*taskOut2=42.*");
+    }
+
+    @Test
+    public void testRetry() throws Exception {
+        deploy("retry");
+
+        save(ProcessConfiguration.builder().build());
+
+        byte[] log = run();
+        assertLog(log, ".*faultyOnceTask: fail.*");
+        assertLog(log, ".*Waiting for 1000ms.*");
+        assertLog(log, ".*faultyOnceTask: ok.*");
+        assertLog(log, ".*neverFailTask: ok.*");
+    }
+
+    @Test
+    public void testCheckpointExpr() throws Exception {
+        deploy("checkpointExpr");
+
+        save(ProcessConfiguration.builder()
+                .putArguments("x", 123)
+                .build());
+
+        run();
+        verify(checkpointService, times(1)).create(eq("test_123"), any(Runtime.class), any(ProcessSnapshot.class));
+    }
+
+    @Test
+    public void testCheckpointRestore() throws Exception {
+        deploy("checkpointRestore");
+
+        save(ProcessConfiguration.builder()
+                .putArguments("aVar", Collections.singletonMap("x", 123))
+                .build());
+
+        run();
+
+        verify(checkpointService, times(1)).create(eq("first"), any(Runtime.class), any(ProcessSnapshot.class));
+        verify(checkpointService, times(1)).create(eq("second"), any(Runtime.class), any(ProcessSnapshot.class));
+
+        Serializable firstCheckpoint = checkpointService.getCheckpoints().get("first");
+        assertNotNull(firstCheckpoint);
+
+        StateManager.saveProcessState(workDir, firstCheckpoint);
+
+        run();
+
+        assertLogAtLeast(allLogs, 2, ".*#3.*x=124.*");
+        assertLogAtLeast(allLogs, 2, ".*#3.*y=345.*");
+    }
+
+    @Test
+    public void testNullIfExpression() throws Exception {
+        deploy("ifExpressionAsNull");
+
+        save(ProcessConfiguration.builder()
+                .putArguments("myVar", Collections.singletonMap("x", 123))
+                .build());
+
+        byte[] log = run();
+        assertLog(log, ".*it's null.*");
     }
 
     private void deploy(String resource) throws URISyntaxException, IOException {
@@ -671,9 +779,14 @@ public class MainTest {
     }
 
     private void save(ProcessConfiguration cfg) {
-        this.processConfiguration = ProcessConfiguration.builder().from(cfg)
-                .instanceId(instanceId)
-                .build();
+        ImmutableProcessConfiguration.Builder b = ProcessConfiguration.builder().from(cfg)
+                .instanceId(instanceId);
+
+        if (cfg.entryPoint() == null) {
+            b.entryPoint(Constants.Request.DEFAULT_ENTRY_POINT_NAME);
+        }
+
+        this.processConfiguration = b.build();
     }
 
     private byte[] resume(String eventName, ProcessConfiguration cfg) throws Exception {
@@ -689,6 +802,8 @@ public class MainTest {
     }
 
     private byte[] run(RunnerConfiguration baseCfg) throws Exception {
+        assertNotNull("save() the process configuration first", processConfiguration);
+
         ImmutableRunnerConfiguration.Builder runnerCfg = RunnerConfiguration.builder();
 
         if (baseCfg != null) {
@@ -702,8 +817,8 @@ public class MainTest {
 
         PrintStream oldOut = System.out;
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        PrintStream out = new PrintStream(baos);
+        ByteArrayOutputStream logStream = new ByteArrayOutputStream();
+        PrintStream out = new PrintStream(logStream);
         System.setOut(out);
 
         AbstractModule runtimeModule = new AbstractModule() {
@@ -719,21 +834,40 @@ public class MainTest {
                     runnerCfg.build(),
                     () -> processConfiguration,
                     testServices,
-                    runtimeModule,
-                    new V1CompatModule()) // allow runtime v1 tasks
+                    runtimeModule) // allow runtime v1 tasks
                     .create();
             injector.getInstance(Main.class).execute();
         } finally {
             out.flush();
             System.setOut(oldOut);
 
-            log = baos.toByteArray();
+            log = logStream.toByteArray();
             System.out.write(log, 0, log.length);
 
             lastLog = log;
         }
 
+        if (allLogs == null) {
+            allLogs = log;
+        } else {
+            // append the current log to allLogs
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(allLogs.length + log.length);
+            baos.write(allLogs);
+            baos.write(log);
+            allLogs = baos.toByteArray();
+        }
+
         return log;
+    }
+
+    private static void assertLogAtLeast(byte[] ab, int n, String pattern) throws IOException {
+        if (ab == null) {
+            fail("Log is empty");
+        }
+
+        if (grep(ab, pattern) < n) {
+            fail("Expected at least " + n + " log line(s): " + pattern + ", got: \n" + new String(ab));
+        }
     }
 
     private static void assertLog(byte[] ab, String pattern) throws IOException {
@@ -742,13 +876,13 @@ public class MainTest {
         }
 
         if (grep(ab, pattern) != 1) {
-            fail("Expected a single log entry: " + pattern + ", got: \n" + new String(ab));
+            fail("Expected a single log line: " + pattern + ", got: \n" + new String(ab));
         }
     }
 
     private static void assertNoLog(byte[] ab, String pattern) throws IOException {
         if (grep(ab, pattern) > 0) {
-            fail("Expected no log entries like this: " + pattern + ", got: \n" + new String(ab));
+            fail("Expected no log lines like this: " + pattern + ", got: \n" + new String(ab));
         }
     }
 
@@ -756,7 +890,7 @@ public class MainTest {
         int cnt = 0;
 
         try (ByteArrayInputStream bais = new ByteArrayInputStream(ab);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(bais))) {
+             BufferedReader reader = new BufferedReader(new InputStreamReader(bais, StandardCharsets.UTF_8))) {
 
             String line;
             while ((line = reader.readLine()) != null) {
@@ -772,17 +906,17 @@ public class MainTest {
     @Named("testDefaults")
     static class TestDefaults implements Task {
 
-        @DefaultVariables("testDefaults")
-        Map<String, Object> defaultsMap;
+        private final Variables defaults;
 
-        @DefaultVariables
-        Defaults defaultsTyped;
+        @Inject
+        public TestDefaults(Context ctx) {
+            this.defaults = ctx.defaultVariables();
+        }
 
         @Override
-        public Serializable execute(Variables input) {
-            System.out.println("defaultsMap:" + defaultsMap);
-            System.out.println("defaultsTyped:" + defaultsTyped);
-            return null;
+        public TaskResult execute(Variables input) {
+            System.out.println("defaultsMap:" + defaults.toMap());
+            return TaskResult.success();
         }
 
         @Value.Immutable
@@ -802,8 +936,9 @@ public class MainTest {
     static class WrapExpressionTask implements Task {
 
         @Override
-        public Serializable execute(Variables input) {
-            return "${" + input.get("expression") + "}";
+        public TaskResult execute(Variables input) {
+            return TaskResult.success()
+                    .value("expression", "${" + input.get("expression") + "}");
         }
     }
 
@@ -812,8 +947,19 @@ public class MainTest {
     static class TestTask implements Task {
 
         @Override
-        public Serializable execute(Variables input) {
-            return new HashMap<>(input.toMap());
+        public TaskResult execute(Variables input) {
+            return TaskResult.success()
+                    .values(input.toMap());
+        }
+    }
+
+    @Named("resultTask")
+    @SuppressWarnings("unused")
+    static class ResultTask implements Task {
+
+        @Override
+        public TaskResult execute(Variables input) {
+            return TaskResult.success().value("result", input.get("result"));
         }
     }
 
@@ -825,7 +971,7 @@ public class MainTest {
         private static final Logger processLog = LoggerFactory.getLogger("processLog");
 
         @Override
-        public Serializable execute(Variables input) throws Exception {
+        public TaskResult execute(Variables input) throws Exception {
             log.info("This goes into a regular log");
             processLog.info("This is a processLog entry");
             System.out.println("This goes directly into the stdout");
@@ -856,40 +1002,46 @@ public class MainTest {
         }
     }
 
-    @Named("v1")
-    @SuppressWarnings("unused")
-    static class V1Task implements com.walmartlabs.concord.sdk.Task {
-
-        @InjectVariable("context")
-        com.walmartlabs.concord.sdk.Context ctx;
-
-        @Override
-        public void execute(com.walmartlabs.concord.sdk.Context ctx) {
-            assertEquals(ctx, this.ctx);
-
-            ctx.setVariable("result", "abc");
-            System.out.println("execute: p1=" + ctx.getVariable("p1"));
-        }
-
-        // can't use in v2
-        public String callWithoutContext() {
-            return "without-context";
-        }
-
-        // can't use in v2
-        public String callWithContext(@InjectVariable("context") com.walmartlabs.concord.sdk.Context ctx) {
-            ctx.setVariable("result2", "xyz");
-            return "with-context";
-        }
-    }
-
     @Named("faultyTask")
     @SuppressWarnings("unused")
     static class FaultyTask implements Task {
 
         @Override
-        public Serializable execute(Variables input) {
+        public TaskResult execute(Variables input) {
             throw new RuntimeException("boom!");
+        }
+    }
+
+    @Named("faultyOnceTask")
+    @SuppressWarnings("unused")
+    static class FaultyOnceTask implements Task {
+
+        private static final Logger log = LoggerFactory.getLogger(FaultyOnceTask.class);
+
+        private static final AtomicBoolean toggle = new AtomicBoolean(false);
+
+        @Override
+        public TaskResult execute(Variables input) {
+            if (!toggle.getAndSet(true)) {
+                log.info("faultyOnceTask: fail");
+                throw new RuntimeException("boom!");
+            }
+
+            log.info("faultyOnceTask: ok");
+            return TaskResult.success();
+        }
+    }
+
+    @Named("neverFailTask")
+    @SuppressWarnings("unused")
+    static class NeverFailTask implements Task {
+
+        private static final Logger log = LoggerFactory.getLogger(NeverFailTask.class);
+
+        @Override
+        public TaskResult execute(Variables input) {
+            log.info("neverFailTask: ok");
+            return TaskResult.success();
         }
     }
 
@@ -909,7 +1061,7 @@ public class MainTest {
         }
 
         @Override
-        public Serializable execute(Variables input) {
+        public TaskResult execute(Variables input) {
             log.info("execute {}", input.toMap());
 
             HashMap<String, Serializable> payload = new HashMap<>();
@@ -918,13 +1070,27 @@ public class MainTest {
 
             EVENT_NAME = context.suspendResume(payload);
 
-            return null;
+            return TaskResult.success();
         }
 
         @Override
-        public Serializable resume(Map<String, Serializable> payload) {
-            log.info("RESUME: {}", payload);
-            return "k=" + payload.get("k") + ", a=b";
+        public TaskResult resume(ResumeEvent event) {
+            log.info("RESUME: {}", event);
+            return TaskResult.success()
+                    .values((Map) event.state());
+        }
+    }
+
+    @Named("simpleMethodTask")
+    @SuppressWarnings("unused")
+    public static class SimpleMethodTask implements Task {
+
+        public int getValue() {
+            return 42;
+        }
+
+        public int getDerivedValue(int value) {
+            return value + 42;
         }
     }
 }

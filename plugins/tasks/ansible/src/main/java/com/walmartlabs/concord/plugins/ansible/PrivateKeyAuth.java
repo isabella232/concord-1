@@ -9,9 +9,9 @@ package com.walmartlabs.concord.plugins.ansible;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -33,11 +33,17 @@ public class PrivateKeyAuth implements AnsibleAuth {
     private final Path workDir;
     private final String username;
     private final Path keyPath;
+    private final boolean removeAfter;
 
-    public PrivateKeyAuth(Path workDir, String username, Path keyPath) {
+    public PrivateKeyAuth(Path workDir, String username, Path keyPath, boolean removeAfter) {
         this.workDir = workDir;
         this.username = username;
         this.keyPath = keyPath;
+        this.removeAfter = removeAfter;
+    }
+
+    public Path getKeyPath() {
+        return keyPath;
     }
 
     @Override
@@ -46,7 +52,7 @@ public class PrivateKeyAuth implements AnsibleAuth {
     }
 
     @Override
-    public AnsibleAuth enrich(AnsibleEnv env) {
+    public AnsibleAuth enrich(AnsibleEnv env, AnsibleContext context) {
         // do nothing
         return this;
     }
@@ -60,6 +66,10 @@ public class PrivateKeyAuth implements AnsibleAuth {
 
     @Override
     public void postProcess() {
+        if (!removeAfter) {
+            return;
+        }
+
         try {
             Files.deleteIfExists(keyPath);
         } catch (Exception e) {

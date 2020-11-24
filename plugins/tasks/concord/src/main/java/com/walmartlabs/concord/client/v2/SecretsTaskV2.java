@@ -25,13 +25,11 @@ import com.walmartlabs.concord.client.SecretsTaskCommon;
 import com.walmartlabs.concord.client.SecretsTaskParams;
 import com.walmartlabs.concord.runtime.v2.sdk.Context;
 import com.walmartlabs.concord.runtime.v2.sdk.Task;
+import com.walmartlabs.concord.runtime.v2.sdk.TaskResult;
 import com.walmartlabs.concord.runtime.v2.sdk.Variables;
 
 import javax.inject.Inject;
 import javax.inject.Named;
-import java.io.Serializable;
-import java.util.HashMap;
-import java.util.Map;
 
 @Named("concordSecrets")
 public class SecretsTaskV2 implements Task {
@@ -40,13 +38,11 @@ public class SecretsTaskV2 implements Task {
 
     @Inject
     public SecretsTaskV2(ApiClient apiClient, Context context) {
-        String processOrg = context.projectInfo() != null ? context.projectInfo().orgName() : null;
-        this.delegate = new SecretsTaskCommon(apiClient, processOrg);
+        this.delegate = new SecretsTaskCommon(apiClient, context.processConfiguration().projectInfo().orgName());
     }
 
     @Override
-    public Serializable execute(Variables input) throws Exception {
-        Map<String, Object> result = delegate.execute(SecretsTaskParams.of(input));
-        return new HashMap<>(result);
+    public TaskResult execute(Variables input) throws Exception {
+        return delegate.execute(SecretsTaskParams.of(input));
     }
 }

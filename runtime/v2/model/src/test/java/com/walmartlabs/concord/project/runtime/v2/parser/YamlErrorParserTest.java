@@ -776,6 +776,17 @@ public class YamlErrorParserTest extends AbstractParserTest {
     }
 
     @Test
+    public void test219() throws Exception {
+        String msg =
+                "(019.yml): Error @ line: 3, col: 13. Invalid value type, expected: STRING, got: INT\n" +
+                        "\twhile processing steps:\n" +
+                        "\t'main' @ line: 2, col: 3\n" +
+                        "\t\t'flows' @ line: 1, col: 1";
+
+        assertErrorMessage("errors/tasks/019.yml", msg);
+    }
+
+    @Test
     public void test300() throws Exception {
         String msg =
                 "(000.yml): Error @ line: 3, col: 12. Invalid value type, expected: STRING, got: NULL. Remove attribute or complete the definition\n" +
@@ -1276,7 +1287,7 @@ public class YamlErrorParserTest extends AbstractParserTest {
     @Test
     public void test703() throws Exception {
         String msg =
-                "(003.yml): Error @ line: 5, col: 13. Unknown options: ['trash' [NULL] @ line: 5, col: 13], expected: [error, withItems, meta]. Remove invalid options and/or fix indentation\n" +
+                "(003.yml): Error @ line: 5, col: 13. Unknown options: ['trash' [NULL] @ line: 5, col: 13], expected: [out, error, withItems, meta]. Remove invalid options and/or fix indentation\n" +
                         "\twhile processing steps:\n" +
                         "\t'try' @ line: 3, col: 7\n" +
                         "\t\t'main' @ line: 2, col: 3\n" +
@@ -1327,7 +1338,7 @@ public class YamlErrorParserTest extends AbstractParserTest {
     @Test
     public void test707() throws Exception {
         String msg =
-                "(007.yml): Error @ line: 11, col: 13. Unknown options: ['trash' [NULL] @ line: 11, col: 13], expected: [error, withItems, meta]. Remove invalid options and/or fix indentation\n" +
+                "(007.yml): Error @ line: 11, col: 13. Unknown options: ['trash' [NULL] @ line: 11, col: 13], expected: [out, error, withItems, meta]. Remove invalid options and/or fix indentation\n" +
                         "\twhile processing steps:\n" +
                         "\t'try' @ line: 3, col: 7\n" +
                         "\t\t'main' @ line: 2, col: 3\n" +
@@ -1736,6 +1747,17 @@ public class YamlErrorParserTest extends AbstractParserTest {
     }
 
     @Test
+    public void test1203() throws Exception {
+        String msg =
+                "(003.yml): Error @ line: 3, col: 12. Unknown options: ['trash' [INT] @ line: 3, col: 12], expected: [configuration, flows, forms]. Remove invalid options and/or fix indentation\n" +
+                        "\twhile processing steps:\n" +
+                        "\t'myProfile' @ line: 2, col: 3\n" +
+                        "\t\t'profiles' @ line: 1, col: 1";
+
+        assertErrorMessage("errors/profiles/003.yml", msg);
+    }
+
+    @Test
     public void test1300() throws Exception {
         String msg =
                 "(000.yml): Error @ line: 1, col: 15. Invalid value type, expected: CONFIGURATION, got: NULL. Remove attribute or complete the definition\n" +
@@ -1803,7 +1825,7 @@ public class YamlErrorParserTest extends AbstractParserTest {
     @Test
     public void test1306() throws Exception {
         String msg =
-                "(006.yml): Error @ line: 8, col: 9. Unknown options: ['trash' [NULL] @ line: 8, col: 9], expected: [runtime, entryPoint, dependencies, meta, requirements, processTimeout, exclusive, events, out, arguments, debug, template]. Remove invalid options and/or fix indentation\n" +
+                "(006.yml): Error @ line: 8, col: 9. Unknown options: ['trash' [NULL] @ line: 8, col: 9], expected: [runtime, entryPoint, dependencies, meta, requirements, processTimeout, activeProfiles, exclusive, events, out, arguments, debug, template]. Remove invalid options and/or fix indentation\n" +
                         "\twhile processing steps:\n" +
                         "\t'configuration' @ line: 1, col: 1";
 
@@ -1938,7 +1960,7 @@ public class YamlErrorParserTest extends AbstractParserTest {
     @Test
     public void test1318() throws Exception {
         String msg =
-                "(018.yml): Error @ line: 23, col: 11. Unknown options: ['trash' [NULL] @ line: 23, col: 11], expected: [recordTaskInVars, truncateInVars, inVarsBlacklist, recordTaskOutVars, truncateOutVars, outVarsBlacklist]. Remove invalid options and/or fix indentation\n" +
+                "(018.yml): Error @ line: 26, col: 11. Unknown options: ['trash' [NULL] @ line: 26, col: 11], expected: [recordTaskInVars, truncateInVars, truncateMaxStringLength, truncateMaxArrayLength, truncateMaxDepth, recordTaskOutVars, truncateOutVars, inVarsBlacklist, outVarsBlacklist]. Remove invalid options and/or fix indentation\n" +
                         "\twhile processing steps:\n" +
                         "\t'events' @ line: 14, col: 3\n" +
                         "\t\t'configuration' @ line: 1, col: 1";

@@ -29,11 +29,12 @@ import com.walmartlabs.concord.imports.ImportManager;
 import com.walmartlabs.concord.imports.ImportManagerFactory;
 import com.walmartlabs.concord.process.loader.model.ProcessDefinitionUtils;
 import com.walmartlabs.concord.process.loader.v2.ProcessDefinitionV2;
-import com.walmartlabs.concord.runtime.common.StateManager;
 import com.walmartlabs.concord.runtime.common.cfg.RunnerConfiguration;
 import com.walmartlabs.concord.runtime.v2.ProjectLoaderV2;
-import com.walmartlabs.concord.runtime.v2.model.ProcessConfiguration;
+import com.walmartlabs.concord.runtime.v2.sdk.ImmutableProcessConfiguration;
+import com.walmartlabs.concord.runtime.v2.sdk.ProcessConfiguration;
 import com.walmartlabs.concord.runtime.v2.model.ProcessDefinition;
+import com.walmartlabs.concord.runtime.v2.model.ProcessDefinitionConfiguration;
 import com.walmartlabs.concord.runtime.v2.runner.InjectorFactory;
 import com.walmartlabs.concord.runtime.v2.runner.Runner;
 import com.walmartlabs.concord.runtime.v2.runner.guice.ProcessDependenciesModule;
@@ -128,7 +129,9 @@ public class Run implements Callable<Integer> {
         }
 
         DependencyManager dependencyManager = initDependencyManager();
-        ImportManager importManager = new ImportManagerFactory(dependencyManager, new CliRepositoryExporter(repoCacheDir), verbose ? new CliImportsListener() : null)
+        ImportManager importManager = new ImportManagerFactory(dependencyManager,
+                new CliRepositoryExporter(repoCacheDir), Collections.emptySet(),
+                verbose ? new CliImportsListener() : null)
                 .create();
 
         ProjectLoaderV2.Result loadResult;
@@ -154,7 +157,7 @@ public class Run implements Callable<Integer> {
             System.out.println("Active profiles: " + profiles);
         }
 
-        ProcessConfiguration cfg = ProcessConfiguration.builder().from(processDefinition.configuration())
+        ProcessConfiguration cfg = from(processDefinition.configuration())
                 .entryPoint(entryPoint)
                 .instanceId(instanceId)
                 .build();
@@ -188,7 +191,7 @@ public class Run implements Callable<Integer> {
         }
 
         try {
-            runner.start(processDefinition, cfg.entryPoint(), args);
+            runner.start(cfg, processDefinition, args);
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             return 1;
@@ -197,6 +200,16 @@ public class Run implements Callable<Integer> {
         System.out.println("...done!");
 
         return 0;
+    }
+
+    private static ImmutableProcessConfiguration.Builder from(ProcessDefinitionConfiguration cfg) {
+        return ProcessConfiguration.builder()
+                .debug(cfg.debug())
+                .entryPoint(cfg.entryPoint())
+                .arguments(cfg.arguments())
+                .meta(cfg.meta())
+                .events(cfg.events())
+                .out(cfg.out());
     }
 
     private static Map<String, Object> getProfilesArguments(ProcessDefinition processDefinition, List<String> profiles) {

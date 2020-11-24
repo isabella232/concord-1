@@ -29,6 +29,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,7 @@ import java.util.Map;
 public class DefaultPlaybookProcessRunner implements PlaybookProcessRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultPlaybookProcessRunner.class);
+    private static final Logger processLog = LoggerFactory.getLogger("processLog");
 
     private final Path workDir;
 
@@ -51,7 +53,7 @@ public class DefaultPlaybookProcessRunner implements PlaybookProcessRunner {
     }
 
     @Override
-    public int run(List<String> args, Map<String, String> extraEnv, LogCallback logCallback) throws IOException, InterruptedException {
+    public int run(List<String> args, Map<String, String> extraEnv) throws IOException, InterruptedException {
         File pwd = workDir.toFile();
         if (!pwd.exists()) {
             throw new IOException("Working directory not found: " + pwd);
@@ -81,10 +83,10 @@ public class DefaultPlaybookProcessRunner implements PlaybookProcessRunner {
 
         Process p = PrivilegedAction.perform("task", b::start);
 
-        BufferedReader reader = new TruncBufferedReader(new InputStreamReader(p.getInputStream()));
+        BufferedReader reader = new TruncBufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8));
         String line;
         while ((line = reader.readLine()) != null) {
-            logCallback.onLog(line);
+            processLog.info("ANSIBLE: {}", line);
         }
 
         return p.waitFor();

@@ -33,13 +33,8 @@ public interface ProcessDefinition extends Serializable {
     long serialVersionUID = 1L;
 
     @Value.Default
-    default String runtime() {
-        return "concord-v2"; // TODO constants
-    }
-
-    @Value.Default
-    default ProcessConfiguration configuration() {
-        return ProcessConfiguration.builder().build();
+    default ProcessDefinitionConfiguration configuration() {
+        return ProcessDefinitionConfiguration.builder().build();
     }
 
     @Value.Default
@@ -68,8 +63,8 @@ public interface ProcessDefinition extends Serializable {
     }
 
     @Value.Default
-    default Forms forms() {
-        return Forms.builder().build();
+    default Map<String, Form> forms() {
+        return Collections.emptyMap();
     }
 
     @Value.Default
@@ -89,12 +84,12 @@ public interface ProcessDefinition extends Serializable {
         }
 
         return ProcessDefinition.builder().from(a)
-                .configuration(ProcessConfiguration.merge(a.configuration(), b.configuration()))
+                .configuration(ProcessDefinitionConfiguration.merge(a.configuration(), b.configuration()))
                 .putAllFlows(b.flows())
                 .profiles(profiles)
                 .addAllTriggers(b.triggers())
                 .imports(Imports.merge(a.imports(), b.imports()))
-                .forms(Forms.merge(a.forms(), b.forms()))
+                .putAllForms(b.forms())
                 .build();
     }
 }

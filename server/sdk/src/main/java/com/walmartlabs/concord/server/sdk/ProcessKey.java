@@ -36,6 +36,13 @@ public class ProcessKey extends PartialProcessKey {
 
     private final OffsetDateTime createdAt;
 
+    /**
+     * Creates a new process key using a random UUID and the current timestamp.
+     */
+    public ProcessKey() {
+        this(UUID.randomUUID(), OffsetDateTime.now());
+    }
+
     public ProcessKey(PartialProcessKey part, OffsetDateTime createdAt) {
         this(part.getInstanceId(), createdAt);
     }
@@ -51,7 +58,7 @@ public class ProcessKey extends PartialProcessKey {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (o == null || !(o instanceof ProcessKey)) return false;
         if (!super.equals(o)) return false;
         ProcessKey that = (ProcessKey) o;
         return Objects.equals(createdAt, that.createdAt);
@@ -66,6 +73,7 @@ public class ProcessKey extends PartialProcessKey {
         return createdAt;
     }
 
+    @Override
     public String toString() {
         return getInstanceId().toString();
     }

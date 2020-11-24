@@ -20,11 +20,6 @@ package com.walmartlabs.concord.runtime.v2.sdk;
  * =====
  */
 
-import com.walmartlabs.concord.runtime.v2.model.ProcessConfiguration;
-import com.walmartlabs.concord.sdk.ApiConfiguration;
-import com.walmartlabs.concord.sdk.ProjectInfo;
-
-import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.Map;
@@ -46,8 +41,10 @@ public interface Context {
 
     Variables variables();
 
-    @Nullable
-    ProjectInfo projectInfo();
+    /**
+     * Default task variables
+     */
+    Variables defaultVariables();
 
     FileService fileService();
 
@@ -97,12 +94,12 @@ public interface Context {
      * Suspends the current task execution and resumes a {@link ReentrantTask}
      * with the provided payload.
      *
-     * @param payload passed to the {@link ReentrantTask#resume(Map)} method
-     *                once the process is resumed.
+     * @param state passed to the {@link ReentrantTask#resume(Map)} method
+     *              once the process is resumed.
      * @return the name of the event on which the process is suspended on.
      * @apiNote unstable API, subject to change
      */
-    String suspendResume(Map<String, Serializable> payload);
+    String suspendResume(Map<String, Serializable> state);
 
     // TODO FormService
 }

@@ -24,6 +24,28 @@ import java.util.*;
 
 public final class ConfigurationUtils {
 
+    @SuppressWarnings("unchecked")
+    public static boolean has(Map<String, Object> m, String[] path) {
+        if (m == null) {
+            return false;
+        }
+
+        if (path.length == 0) {
+            return false;
+        }
+
+        for (int i = 0; i < path.length - 1; i++) {
+            Object v = m.get(path[i]);
+            if (!(v instanceof Map)) {
+                return false;
+            }
+
+            m = (Map<String, Object>) v;
+        }
+
+        return m.containsKey(path[path.length - 1]);
+    }
+
     public static Object get(Map<String, Object> m, String... path) {
         int depth = path != null ? path.length : 0;
         return get(m, depth, path);
@@ -52,7 +74,7 @@ public final class ConfigurationUtils {
             m = (Map<String, Object>) v;
         }
 
-        return m.get(path[path.length - 1]);
+        return m.get(path[depth - 1]);
     }
 
     @SuppressWarnings("unchecked")
@@ -104,9 +126,9 @@ public final class ConfigurationUtils {
     public static Map<String, Object> deepMerge(Map<String, Object> a, Map<String, Object> b) {
         Map<String, Object> result = new LinkedHashMap<>(a != null ? a : Collections.emptyMap());
 
-        for (String k : b.keySet()) {
-            Object av = result.get(k);
-            Object bv = b.get(k);
+        for (Map.Entry<String, Object> bEntry : b.entrySet()) {
+            Object av = result.get(bEntry.getKey());
+            Object bv = bEntry.getValue();
 
             Object o = bv;
             if (av instanceof Map && bv instanceof Map) {
@@ -114,10 +136,10 @@ public final class ConfigurationUtils {
             }
 
             // preserve the order of the keys
-            if (result.containsKey(k)) {
-                result.replace(k, o);
+            if (result.containsKey(bEntry.getKey())) {
+                result.replace(bEntry.getKey(), o);
             } else {
-                result.put(k, o);
+                result.put(bEntry.getKey(), o);
             }
         }
         return result;
@@ -137,7 +159,7 @@ public final class ConfigurationUtils {
     }
 
     public static Map<String, Object> toNested(String k, Object v) {
-        String[] as = k.split("\\.");
+        String[] as = k.split("\\.", -1);
         if (as.length == 1) {
             return Collections.singletonMap(k, v);
         }
@@ -158,6 +180,7 @@ public final class ConfigurationUtils {
         return root;
     }
 
+    @SuppressWarnings("rawtypes")
     public static boolean deepEquals(Object a, Object b) {
         if (!Objects.deepEquals(a, b)) {
             return false;
@@ -170,6 +193,21 @@ public final class ConfigurationUtils {
         }
 
         return true;
+    }
+
+    @SafeVarargs
+    public static <T> Set<T> distinct(Collection<T>... collections) {
+        Set<T> result = new HashSet<>();
+
+        if (collections != null) {
+            for (Collection<T> coll : collections) {
+                if (coll != null) {
+                    result.addAll(coll);
+                }
+            }
+        }
+
+        return result;
     }
 
     private static boolean equals(Map<?, ?> a, Map<?, ?> b) {

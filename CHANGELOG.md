@@ -1,5 +1,293 @@
 # Change log
 
+## [1.68.0] - 2020-10-05
+
+### Added
+
+- concord-server: a PayloadBuilder method to add files to the process'
+`workDir`;
+- file-tasks: initial version.
+
+### Changed
+
+- slack-tasks: read default variables from context instead of
+`@InjectVariables`. This fixes an issue of calling `slack` using
+expressions;
+- runtime-v2: fixed handling of process state snapshots. Now
+the runtime correcly resumes from state snapshots and forks.
+
+
+
+## [1.67.0] - 2020-10-01
+
+### Added
+
+- variables-tasks: runtime-v2 support for the `vars` task;
+- runtime-v2: allow profiles to override flows, forms;
+- concord-server: tx aware OrganizationManager's `createOrUpdate` and
+`createOrGet` methods, useful for server-side plugins;
+- concord-server: tx aware SecretManager's `createBinaryData` method;
+- concord-console, runtime-v2: the process events list now includes
+links to the source code of steps;
+- resource-tasks: `prettyPrintYaml` method to output data as
+formatted YAML;
+- concord-server, concord-console: option to download "the
+effective YAML" - a single YAML document with all Concord resources
+for a given process.
+
+### Changed
+
+- concord-server: fixed the handling of the `values` field when
+`readonly` form fields are used;
+- runtime-v2: fixed a typo in code that prevented default form field
+values from working correctly;
+- concord-tasks: `repositoryRefresh` task was converted to v2;
+- concord-agent: tone down logging when the main thread is
+interrupted;
+- ansible: allow any Java `Collection` types (list, set, etc) as
+inventory host lists;
+- concord-agent: improved error handling in workers;
+- concord-server: fixed the error message template when validating
+forms;
+- concord-server: fixed a potential race when registering internal
+metrics. Fixes a `ConcurrentModificationException` when Server is
+running in an embedded environment, e.g. testcontainer-concord's
+LOCAL mode.
+
+### Breaking
+
+- runtime-v2: `ProcessDefinition#configuration()` is a separate type
+now;
+- runtime-v2: move `ProjectInfo` classes to the SDK.
+
+
+## [1.66.0] - 2020-09-17
+
+### Added
+
+- concord-server: optional `startAt` filter in
+the `/api/v2/process/requirements` endpoint;
+- concord-cli: support for creating new secrets using SecretManager's
+`create*` methods;
+- http-tasks: `followRedirects` now works for `POST` requests too;
+- concord-server: access changes for projects, secrets and JSON
+stores are now recorded in the audit log (e.g. assigning a team to a
+project);
+- concord-server: configurable out variables mode for projects. Now
+project owners can restrict who can specify `out` variables in the
+process request;
+- slack: full support for runtime-v2. All v1 actions should now be
+available in the v2 version too;
+- runtime-v2, concord-console: record and display task results (as in
+`configuration.events.recordTaskOutVars`).
+
+### Changed
+
+- concord-server, concord-console: don't send `WWW-Authenticate` for
+unauthorized UI requests to prevent the basic auth popup from
+showing;
+- concord-server: `dateTime` form fields are now converted into UTC
+on submit;
+- agent-operator: when checking the queue's status, filter out
+processes with `startAt` in the future;
+- docker-images: python 2 to 3 migration, ansible 2.8 by default;
+- ansible: python 2 to 3 compatibility fixes;
+- concord-server: fixed the checksum of the `170000` changeset;
+- concord-server: fixed an issue of the `runtime` parameter not being
+passed correctly to the process' forks.
+
+
+
+## [1.65.0] - 2020-09-09
+
+### Added
+
+- concord-console: hyperlinks to individual log segments so
+users can share/access a segment instead of scrolling;
+- concord-server: support for added/removed/modified `files`
+in GitHub push trigger conditions;
+- runtime-v2: support nested variables in
+`configuration.events.inVarsBlacklist`/`outVarsBlacklist`;
+- concord-agent: option to keep the workDir in a configured
+directory after the process ends;
+- concord-console: allow changing owners of secrets;
+
+### Changed
+
+- concord-console: keep the "system" segment open by default
+so users can see overall progress;
+- concord-server: `USERS.IS_ADMIN` column is deprecated and
+its usage has been removed from the code;
+- runtime-v2: working process checkpoints support.
+
+
+
+## [1.64.0] - 2020-09-02
+
+### Added
+
+- runtime-v2: support for expressions in checkpoint names.
+
+### Changed
+
+- runtime-v2: improved error message when trying to assign a
+non-serializable value into a `TaskResult`;
+- concord-console: increase the number of visible log segments
+to 100 (was 30);
+- concord-server: change the wording of the maximum number of
+dependencies error message;
+- runtime-v2: merge EventConfiguration when loading multiple
+resources. Allows users to specify the `events` configuration in
+any Concord YAML file available for the process;
+- concord-server: fixed the maximum number of dependencies error
+message;
+- runtime-v2: create a single merged `event` configuration from
+`event` sections of all loaded Concord YAML files.
+
+### Breaking
+
+- runtime-v2: rename `SecretParams#name` to `secretName`. Affects
+the secret creation methods in `SecretService`);
+- runtime-v2: assume `retry.delay` is in seconds (like in v1).
+
+
+
+## [1.63.0] - 2020-08-30
+
+### Added
+
+- concord-imports: support for `dir` imports (external directories),
+disabled by default;
+- crypto-tasks: an action to create new secrets (runtime-v2 only);
+- concord-server: JSON store data can now be updated by either `POST`
+or `PUT` method;
+- runtime-v2: support for nested `set`;
+- runtime-v2: support for `out` variables in `try` and `block`
+steps;
+- runtime-v2: support for naming of `log`, `throw` and `expr` steps;
+- runtime-v2: additional `Variables#assert*` methods.
+
+### Changed
+
+- runtime-v2: fixed a potential NPE in the `retry` code when handling
+exceptions w/o message;
+- docker-images: remove `dumb-init` as Docker ships its own init
+implementation;
+- runtime-v2: when using `withItems`, `out` variables are now
+collected into lists;
+- concord-server: remove user's LDAP groups from the DB when
+the account is disabled;
+- runtime-v1: fixed an issue when GitHub triggers without `version`
+were treated as v1 triggers;
+- concord-console: new look for the runtime v2 log viewer;
+- concord-console: fix layout of the JSON store query editor;
+- iam-sso: mark the SSO cookie as "secure";
+- ansible: fixed an issue when `ignore_error` values were saved
+"as is" in Ansible events (e.g. unevaluated expressions);
+- concord-agent: do not print out the process' `sessionToken` in
+logs;
+- concord-console: fix manual refreshing of the process list;
+- concord-server: allow nested metadata filters in
+`GET /api/v2/process` and `GET /api/v2/process/count` endpoints;
+- concord-server: runtime-v2 compatibility for processes started via
+the browser link (aka "the process portal").
+
+### Breaking
+
+- concord-server: the process list entries
+(`GET /api/v2/process` endpoint) no longer include `imports`.
+
+
+
+## [1.62.0] - 2020-08-19
+
+### Added
+
+- concord-server: a way to deploy the DB schema without
+`SUPERUSER` role and/or `CREATE EXTENSION` privileges;
+- concord-console: a way to open a process log at a specific
+checkpoint by using `#/process/{id}/log#{eventCorrelationId}`;
+- runtime-v2: the v2 SDK now provides the `DependencyManager`
+interface.
+
+### Changed
+
+- concord-client: `ClientUtils#getHeaders` now correctly assumes
+case-insensitivity of header names;
+- concord-server: `OrganizationManager#create` and `#update`
+replaced with a single `createOrUpdate` method;
+- ansible: when using `auth.privateKey.path` don't remove the file
+after the play's end.
+
+### Breaking
+
+- runtime-v2: `Task#execute` and `ReentrantTask#resume` now return
+a new common result type - `com.walmartlabs.concord.runtime.v2.sdk.TaskResult`.
+
+
+
+## [1.61.0] - 2020-08-13
+
+### Added
+
+- concord-agent: `CONCORD_JAVA_OPTS` environment variable can now be
+used to specify additional JVM options.
+
+### Changed
+
+- concord-server: allow `null` values in process event data to
+improve backward compatibility with older plugins;
+- runtime-v2: warn about `@Singleton` tasks;
+- runtime-v1, runtime-v2: `throw` with a string value doesn't
+produce a stacktrace anymore;
+- project: JDK 11 compatibility.
+
+### Breaking
+
+- runtime-v2: `ReentrantTask` now accepts `ResumeEvent` instead of
+`Map<String, Object>`;
+- runtime-v2: `@DefaultVariables` annotation was replaced with
+`Context#defaultVariables()` method;
+- runtime-v2: the SDK module no longer shares interfaces/types with
+the v1 SDK:
+  - `ApiConfiguration`
+  - `DockerContainerSpec`
+
+
+
+## [1.60.1] - 2020-08-05
+
+### Changed
+
+- concord-agent: fixed an issue preventing the Agent from working
+in the `LOCAL` mode of [testcontainers-concord](https://github.com/concord-workflow/testcontainers-concord).
+
+
+
+## [1.60.0] - 2020-08-05
+
+### Added
+
+- runtime-v2: support for `name` attributes in task, flow call and
+expresion steps;
+- concord-server: store process `dependencies` in
+the `process_queue.dependencies` column;
+- runtime-v2: `LockService` implementation;
+- concord-server: expose the current number of processes with
+"wait conditions" as a new metric - `process_queue_enqueued_wait`.
+
+### Changed
+
+- concord-agent: use process session token to append logs, download
+state, update status, etc. Previously, agents used an API token from
+the configuration file for such operations;
+- concord-console: the refresh action of the process list page was
+rewritten to use React Hooks;
+- concord-console: fixed scrolling on the repository list page in
+the presence of a modal dialog.
+
+
+
 ## [1.59.0] - 2020-07-30
 
 ### Changed

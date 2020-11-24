@@ -30,19 +30,22 @@ import com.walmartlabs.concord.runtime.common.StateManager;
 import com.walmartlabs.concord.runtime.common.cfg.RunnerConfiguration;
 import com.walmartlabs.concord.runtime.v2.NoopImportsNormalizer;
 import com.walmartlabs.concord.runtime.v2.ProjectLoaderV2;
-import com.walmartlabs.concord.runtime.v2.model.ProcessConfiguration;
+import com.walmartlabs.concord.runtime.v2.sdk.ProcessConfiguration;
 import com.walmartlabs.concord.runtime.v2.model.ProcessDefinition;
 import com.walmartlabs.concord.runtime.v2.runner.guice.ObjectMapperProvider;
 import com.walmartlabs.concord.runtime.v2.runner.logging.LoggingConfigurator;
 import com.walmartlabs.concord.runtime.v2.runner.tasks.TaskProviders;
 import com.walmartlabs.concord.runtime.v2.sdk.WorkingDirectory;
 import com.walmartlabs.concord.sdk.Constants;
+import com.walmartlabs.concord.svm.Frame;
+import com.walmartlabs.concord.svm.State;
 import com.walmartlabs.concord.svm.ThreadStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -116,33 +119,53 @@ public class Main {
 
         String segmentedLogDir = runnerCfg.logging().segmentedLogDir();
         if (segmentedLogDir != null) {
-            LoggingConfigurator.configure(processCfg.instanceId(), segmentedLogDir);
+            LoggingConfigurator.configure(Objects.requireNonNull(processCfg.instanceId()), segmentedLogDir);
         }
 
         if (processCfg.debug()) {
             log.info("Available tasks: {}", taskProviders.names());
         }
 
+        Path workDir = this.workDir.getValue();
         Map<String, Object> processArgs = prepareProcessArgs(processCfg);
 
-        ProcessSnapshot snapshot;
-        Set<String> events = StateManager.readResumeEvents(workDir.getValue()); // TODO make it an interface
-        if (events == null || events.isEmpty()) {
-            snapshot = start(runner, workDir.getValue(), processCfg, processArgs);
-        } else {
-            snapshot = resume(runner, workDir.getValue(), processCfg, processArgs, events);
+        // three modes:
+        //  - regular start "from scratch" (or running a "handler" process)
+        //  - continuing from a checkpoint
+        //  - resuming after suspend
+
+        ProcessSnapshot snapshot = StateManager.readProcessState(workDir);
+        Set<String> events = StateManager.readResumeEvents(workDir); // TODO make it an interface?
+
+        switch (currentAction(snapshot, events)) {
+            case START: {
+                if (snapshot != null) {
+                    // grab top-level variables from the snapshot and use them as process arguments
+                    processArgs.putAll(getTopLevelVariables(snapshot));
+                }
+
+                snapshot = start(runner, workDir, processCfg, processArgs);
+                break;
+            }
+            case RESUME: {
+                snapshot = resume(runner, processCfg, snapshot, processArgs, events);
+                break;
+            }
+            case RESTART_FROM_A_CHECKPOINT: {
+                if (snapshot == null) {
+                    throw new IllegalStateException("Can't restart from a checkpoint without a ProcessSnapshot. " +
+                            "This is most likely a bug.");
+                }
+
+                snapshot = restart(runner, snapshot, processArgs);
+                break;
+            }
         }
 
         if (isSuspended(snapshot)) {
-            StateManager.finalizeSuspendedState(workDir.getValue(), snapshot, getEvents(snapshot)); // TODO make it an interface
+            StateManager.finalizeSuspendedState(workDir, snapshot, getEvents(snapshot)); // TODO make it an interface?
         } else {
-            StateManager.cleanupState(workDir.getValue()); // TODO make it an interface
-        }
-    }
-
-    private static void validate(ProcessConfiguration cfg) {
-        if (cfg.instanceId() == null) {
-            throw new IllegalStateException("ProcessConfiguration -> instanceId cannot be null");
+            StateManager.cleanupState(workDir); // TODO make it an interface
         }
     }
 
@@ -151,7 +174,7 @@ public class Main {
         Map<String, Object> m = new LinkedHashMap<>(cfg.arguments());
 
         // save the current process ID as an argument, flows and plugins expect it to be a string value
-        m.put(Constants.Context.TX_ID_KEY, cfg.instanceId().toString());
+        m.put(Constants.Context.TX_ID_KEY, Objects.requireNonNull(cfg.instanceId()).toString());
 
         m.put(Constants.Context.WORK_DIR_KEY, workDir.getValue().toAbsolutePath().toString());
 
@@ -161,6 +184,19 @@ public class Main {
         m.put(Constants.Request.PROJECT_INFO_KEY, om.convertValue(cfg.projectInfo(), Map.class));
 
         return m;
+    }
+
+    private static Map<String, Serializable> getTopLevelVariables(ProcessSnapshot snapshot) {
+        State state = snapshot.vmState();
+        List<Frame> frames = state.getFrames(state.getRootThreadId());
+        Frame rootFrame = frames.get(frames.size() - 1);
+        return rootFrame.getLocals();
+    }
+
+    private static void validate(ProcessConfiguration cfg) {
+        if (cfg.instanceId() == null) {
+            throw new IllegalStateException("ProcessConfiguration -> instanceId cannot be null");
+        }
     }
 
     private static ProcessSnapshot start(Runner runner, Path workDir, ProcessConfiguration cfg, Map<String, Object> args) throws Exception {
@@ -175,10 +211,18 @@ public class Main {
             args.put(Constants.Request.CURRENT_USER_KEY, initiator);
         }
 
-        return runner.start(processDefinition, cfg.entryPoint(), args);
+        return runner.start(cfg, processDefinition, args);
     }
 
-    private static ProcessSnapshot resume(Runner runner, Path workDir, ProcessConfiguration cfg, Map<String, Object> args, Set<String> events) throws Exception {
+    private static ProcessSnapshot restart(Runner runner, ProcessSnapshot snapshot, Map<String, Object> args) throws Exception {
+
+        return runner.resume(snapshot, args);
+    }
+
+    private static ProcessSnapshot resume(Runner runner, ProcessConfiguration cfg,
+                                          ProcessSnapshot snapshot, Map<String, Object> args,
+                                          Set<String> events) throws Exception {
+
         Map<String, Object> initiator = cfg.initiator();
         if (initiator != null) {
             args.put(Constants.Request.INITIATOR_KEY, initiator);
@@ -189,12 +233,11 @@ public class Main {
             args.put(Constants.Request.CURRENT_USER_KEY, currentUser);
         }
 
-        ProcessSnapshot state = StateManager.readState(workDir, ProcessSnapshot.class); // TODO make it an interface
         for (String event : events) {
-            state = runner.resume(state, event, args);
+            snapshot = runner.resume(snapshot, event, args);
         }
 
-        return state;
+        return snapshot;
     }
 
     private static boolean isSuspended(ProcessSnapshot snapshot) {
@@ -211,5 +254,38 @@ public class Main {
         }
 
         return events;
+    }
+
+    private static Action currentAction(ProcessSnapshot snapshot, Set<String> events) {
+        if (snapshot != null && snapshot.executionMode() == ExecutionMode.CHECKPOINT_RESTORE) {
+            // restoring from a checkpoint, see ProcessManager#restoreFromCheckpoint
+            return Action.RESTART_FROM_A_CHECKPOINT;
+        }
+
+        if (events != null && !events.isEmpty()) {
+            return Action.RESUME;
+        }
+
+        return Action.START;
+    }
+
+    private enum Action {
+        /**
+         * Regular start. If there's a process snapshot (e.g. a handler process like "onCancel"),
+         * its variables from the root frame are passed as process arguments.
+         */
+        START,
+
+        /**
+         * Resuming with an event (e.g. a form event).
+         * Previous state + an event ref.
+         */
+        RESUME,
+
+        /**
+         * Restarting from a previously created checkpoint.
+         * Previous state, no events.
+         */
+        RESTART_FROM_A_CHECKPOINT
     }
 }

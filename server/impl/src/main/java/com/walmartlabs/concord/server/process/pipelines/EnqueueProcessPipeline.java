@@ -29,7 +29,8 @@ import javax.inject.Inject;
 import javax.inject.Named;
 
 /**
- * Handles NEW processes. Puts the processes into the ENQUEUED status.
+ * Handles NEW "regular" processes. Puts the processes into the ENQUEUED status.
+ * Forks are processed by {@link ForkPipeline}.
  */
 @Named
 public class EnqueueProcessPipeline extends Pipeline {
@@ -67,6 +68,7 @@ public class EnqueueProcessPipeline extends Pipeline {
                 DependencyVersionsExportProcessor.class,
                 StateImportingProcessor.class,
                 ProcessHandlersProcessor.class,
+                EffectiveProcessDefinitionProcessor.class,
                 SecuritySubjectProcessor.class,
                 EnqueueingProcessor.class);
 

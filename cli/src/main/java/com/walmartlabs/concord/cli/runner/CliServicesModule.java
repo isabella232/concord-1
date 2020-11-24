@@ -26,9 +26,13 @@ import com.google.inject.multibindings.Multibinder;
 import com.walmartlabs.concord.runtime.v2.runner.*;
 import com.walmartlabs.concord.runtime.v2.runner.checkpoints.CheckpointService;
 import com.walmartlabs.concord.runtime.v2.runner.guice.BaseRunnerModule;
+import com.walmartlabs.concord.runtime.v2.sdk.DependencyManager;
+import com.walmartlabs.concord.runtime.v2.sdk.DockerService;
 import com.walmartlabs.concord.runtime.v2.sdk.LockService;
+import com.walmartlabs.concord.runtime.v2.sdk.SecretService;
 import com.walmartlabs.concord.svm.ExecutionListener;
 
+import javax.inject.Singleton;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -48,13 +52,8 @@ public class CliServicesModule extends AbstractModule {
     protected void configure() {
         install(new BaseRunnerModule());
 
-        CliSecretService secretService = new CliSecretService(secretStoreDir, vaultProvider);
-
-        bind(com.walmartlabs.concord.sdk.SecretService.class).toInstance(new CliSecretServiceV1(secretService));
-        bind(com.walmartlabs.concord.runtime.v2.sdk.SecretService.class).toInstance(new CliSecretServiceV2(secretService, workDir));
-
-        bind(com.walmartlabs.concord.sdk.DockerService.class).to(CliDockerServiceV1.class);
-        bind(com.walmartlabs.concord.runtime.v2.sdk.DockerService.class).to(CliDockerServiceV2.class);
+        bind(SecretService.class).toInstance(new CliSecretService(workDir, secretStoreDir, vaultProvider));
+        bind(DockerService.class).to(CliDockerService.class);
 
         bind(CheckpointService.class).to(CliCheckpointService.class);
         bind(PersistenceService.class).to(DefaultPersistenceService.class);
@@ -64,6 +63,8 @@ public class CliServicesModule extends AbstractModule {
         bind(DefaultTaskVariablesService.class).toInstance(new MapBackedDefaultTaskVariablesService(readDefaultVars()));
 
         bind(LockService.class).to(CliLockService.class);
+
+        bind(DependencyManager.class).to(DefaultDependencyManager.class).in(Singleton.class);
 
         Multibinder.newSetBinder(binder(), ExecutionListener.class);
     }

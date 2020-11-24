@@ -20,11 +20,13 @@ package com.walmartlabs.concord.server.process.form;
  * =====
  */
 
+import com.walmartlabs.concord.common.ConfigurationUtils;
 import com.walmartlabs.concord.common.IOUtils;
 import com.walmartlabs.concord.common.form.ConcordFormFields;
 import com.walmartlabs.concord.common.form.ConcordFormValidatorLocale;
 import com.walmartlabs.concord.forms.ValidationError;
 import com.walmartlabs.concord.sdk.Constants;
+import com.walmartlabs.concord.sdk.MapUtils;
 import com.walmartlabs.concord.server.sdk.ConcordApplicationException;
 import io.takari.bpm.form.Form;
 import io.takari.bpm.model.form.DefaultFormFields;
@@ -47,7 +49,15 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public final class FormUtils {
 
-    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("YYYY-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
+    /**
+     * Date/time format used to pass date and dateTime fields between the Server and the process.
+     */
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US);
+
+    /**
+     * All date/time values are converted into the default time zone.
+     */
+    private static final ZoneId DEFAULT_TIME_ZONE = ZoneId.of("UTC");
 
     public static Map<String, String> mergeErrors(List<ValidationError> errors) {
         if (errors == null || errors.isEmpty()) {
@@ -86,7 +96,6 @@ public final class FormUtils {
     }
 
     // TODO this probably should be a part of the bpm engine's FormService
-    @SuppressWarnings("unchecked")
     public static Map<String, Object> convert(ConcordFormValidatorLocale locale, Form form, Map<String, Object> m) throws ValidationException {
         FormDefinition fd = form.getFormDefinition();
 
@@ -94,9 +103,7 @@ public final class FormUtils {
         Map<String, Object> m2 = new HashMap<>();
         m2.put(Constants.Files.FORM_FILES, tmpFiles);
 
-        Map<String, Object> env = form.getEnv();
-
-        Map<String, Object> defaultData = env != null ? (Map<String, Object>) env.get(fd.getName()) : Collections.emptyMap();
+        Map<String, Object> defaultData = FormUtils.values(form);
 
         for (FormField f : fd.getFields()) {
             String k = f.getName();
@@ -127,6 +134,29 @@ public final class FormUtils {
             }
         }
         return m2;
+    }
+
+    public static Map<String, Object> values(Form form) {
+        String formName = form.getFormDefinition().getName();
+
+        Map<String, Object> env = form.getEnv();
+        if (env == null) {
+            env = Collections.emptyMap();
+        }
+
+        Map<String, Object> formState = MapUtils.getMap(env, formName, Collections.emptyMap());
+        Map<String, Object> extraValues = extraValues(form);
+
+        // merge the initial form values and the "extra" values, provided
+        // in the "values" option of the form
+        Map<String, Object> a = new HashMap<>(formState);
+        Map<String, Object> b = new HashMap<>(extraValues);
+        ConfigurationUtils.merge(a, b);
+        return a;
+    }
+
+    public static Map<String, Object> extraValues(Form form) {
+        return MapUtils.getMap(form.getOptions(), "values", Collections.emptyMap());
     }
 
     private static Object convert(ConcordFormValidatorLocale locale, String formName, FormField f, Integer idx, Object v) throws ValidationException {
@@ -188,7 +218,7 @@ public final class FormUtils {
                     // on the process level those values are represented as java.util.Date (i.e. no TZ info retained)
                     // so we assume all Date values are in the default system TZ (which is typically UTC)
                     return ZonedDateTime.parse(s)
-                            .withZoneSameInstant(ZoneId.systemDefault())
+                            .withZoneSameInstant(DEFAULT_TIME_ZONE)
                             .format(DATE_TIME_FORMATTER);
                 }
             }
@@ -225,6 +255,8 @@ public final class FormUtils {
     }
 
     public static class ValidationException extends Exception {
+
+        private static final long serialVersionUID = 1L;
 
         private final FormField field;
         private final String input;

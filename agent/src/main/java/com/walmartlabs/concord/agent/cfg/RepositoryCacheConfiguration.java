@@ -27,9 +27,8 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
-import static com.walmartlabs.concord.agent.cfg.Utils.getDir;
+import static com.walmartlabs.concord.agent.cfg.Utils.getOrCreatePath;
 
 @Named
 @Singleton
@@ -43,11 +42,11 @@ public class RepositoryCacheConfiguration {
 
     @Inject
     public RepositoryCacheConfiguration(Config cfg) {
-        this.cacheDir = getDir(cfg, "repositoryCache.cacheDir");
+        this.cacheDir = getOrCreatePath(cfg, "repositoryCache.cacheDir");
         this.lockTimeout = cfg.getDuration("repositoryCache.lockTimeout");
         this.lockCount = cfg.getInt("repositoryCache.lockCount");
         this.maxAge = cfg.getDuration("repositoryCache.maxAge");
-        this.infoDir = getDir(cfg, "repositoryCache.cacheInfoDir");
+        this.infoDir = getOrCreatePath(cfg, "repositoryCache.cacheInfoDir");
     }
 
     public Path getCacheDir() {

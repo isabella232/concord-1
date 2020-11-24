@@ -199,6 +199,9 @@ public class PayloadManager {
     /**
      * Creates a payload to resume a suspended process, pulling the necessary data from the state storage.
      *
+     * @param processKey
+     * @param eventName  {@code null} in the "concord-v2" runtime
+     * @param req
      * @return
      */
     public Payload createResumePayload(ProcessKey processKey, String eventName, Map<String, Object> req) throws IOException {
@@ -246,7 +249,7 @@ public class PayloadManager {
             return null;
         }
 
-        String[] as = entryPoint.split(":");
+        String[] as = entryPoint.split(":",-1);
         if (as.length < 1 || as.length > 3) {
             throw new ValidationErrorsException("Invalid entry point format: " + entryPoint);
         }

@@ -52,12 +52,15 @@ public class StateImportingProcessor implements PayloadProcessor {
     public Payload process(Chain chain, Payload payload) {
         ProcessKey processKey = payload.getProcessKey();
         Path workspace = payload.getHeader(Payload.WORKSPACE_DIR);
-        List<Snapshot> snapshots = payload.getHeader(RepositoryProcessor.REPOSITORY_SNAPSHOT);
+        List<Snapshot> snapshots = payload.getHeader(Payload.REPOSITORY_SNAPSHOT);
         stateManager.replacePath(processKey, workspace, (p, attrs) -> filter(p, attrs, snapshots, workspace));
 
         return chain.process(payload);
     }
 
+    /**
+     * Return {@code true} for each {@code p} that must be included into the process state.
+     */
     private boolean filter(Path p, BasicFileAttributes attrs, List<Snapshot> snapshots, Path workDir) {
         // those files we need to store in the DB regardless of whether they are from a repository or not
         // e.g. custom forms: we need those files in the DB in order to serve custom form files
@@ -77,7 +80,7 @@ public class StateImportingProcessor implements PayloadProcessor {
 
         if (snapshots != null) {
             ListIterator<Snapshot> it = snapshots.listIterator(snapshots.size());
-            while(it.hasPrevious()) {
+            while (it.hasPrevious()) {
                 Snapshot s = it.previous();
                 if (s.contains(p)) {
                     return s.isModified(p, attrs);

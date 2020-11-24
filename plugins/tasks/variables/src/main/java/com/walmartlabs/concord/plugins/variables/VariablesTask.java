@@ -25,53 +25,28 @@ import com.walmartlabs.concord.sdk.Context;
 import com.walmartlabs.concord.sdk.InjectVariable;
 import com.walmartlabs.concord.sdk.Task;
 
-import javax.el.*;
 import javax.inject.Named;
-import java.beans.FeatureDescriptor;
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import static com.walmartlabs.concord.plugins.variables.VariablesTaskCommon.EvalVariable;
 
 @Named("vars")
+@SuppressWarnings("unused")
 public class VariablesTask implements Task {
 
-    private final ExpressionFactory expressionFactory = ExpressionFactory.newInstance();
-
     public Object get(@InjectVariable("context") Context ctx, String key, Object defaultValue) {
-        Object v;
-        if (isNestedVariable(key)) {
-            StandardELContext sc = createELContext(ctx);
-            ValueExpression x = expressionFactory.createValueExpression(sc, "${" + key + "}", Object.class);
-            try {
-                v = x.getValue(sc);
-            } catch (PropertyNotFoundException e) {
-                v = null;
-            }
-        } else {
-            v = ctx.getVariable(key);
-        }
-        return v != null ? v : defaultValue;
+        return delegate(ctx).get(key, defaultValue);
     }
 
     public void set(@InjectVariable("context") Context ctx, String targetKey, String sourceKey, String defaultKey) {
-        Object v = ctx.getVariable(sourceKey);
-        if (v == null) {
-            v = ctx.getVariable(defaultKey);
-        }
-        ctx.setVariable(targetKey, v);
+        delegate(ctx).set(targetKey, sourceKey, defaultKey);
     }
 
-    @SuppressWarnings("unchecked")
     public void set(@InjectVariable("context") Context ctx, Map<String, Object> vars) {
-        vars.forEach((k, value) -> {
-            Map<String, Object> vv = (Map<String, Object>) ctx.interpolate(Collections.singletonMap(k, value));
-            Object v = vv.get(k);
-            if (isNestedVariable(k)) {
-                StandardELContext sc = createELContext(ctx);
-                ValueExpression x = expressionFactory.createValueExpression(sc, "${" + k + "}", Object.class);
-                x.setValue(sc, v);
-            } else {
-                ctx.setVariable(k, v);
-            }
-        });
+        delegate(ctx).set(vars);
     }
 
     public Object eval(@InjectVariable("context") Context ctx, Object v) {
@@ -79,80 +54,34 @@ public class VariablesTask implements Task {
     }
 
     public List<Object> concat(Collection<Object> a, Collection<Object> b) {
-        if (a == null) {
-            a = Collections.emptyList();
-        }
-
-        if (b == null) {
-            b = Collections.emptyList();
-        }
-
-        List<Object> l = new ArrayList<>(a.size() + b.size());
-        l.addAll(a);
-        l.addAll(b);
-        return l;
+        return VariablesTaskCommon.concat(a, b);
     }
 
-    private boolean isNestedVariable(String str) {
-        return str.contains(".");
+    private static VariablesTaskCommon delegate(Context ctx) {
+        return new VariablesTaskCommon(new VariablesAdapter(ctx), Collections.singletonList(new EvalVariable(Constants.Context.CONTEXT_KEY, ctx, Context.class)));
     }
 
-    private StandardELContext createELContext(Context ctx) {
-        ELResolver r = new VariablesResolver(ctx);
+    private static class VariablesAdapter implements VariablesTaskCommon.Variables {
 
-        StandardELContext sc = new StandardELContext(expressionFactory);
-        sc.putContext(ExpressionFactory.class, expressionFactory);
-        sc.addELResolver(r);
+        private final Context context;
 
-        VariableMapper vm = sc.getVariableMapper();
-        vm.setVariable(Constants.Context.CONTEXT_KEY, expressionFactory.createValueExpression(ctx, Context.class));
-        return sc;
-    }
-
-    private static class VariablesResolver extends ELResolver {
-
-        private final Context ctx;
-
-        public VariablesResolver(Context executionContext) {
-            this.ctx = executionContext;
+        private VariablesAdapter(Context context) {
+            this.context = context;
         }
 
         @Override
-        public Class<?> getCommonPropertyType(ELContext context, Object base) {
-            return Object.class;
+        public Object get(String name) {
+            return context.getVariable(name);
         }
 
         @Override
-        public Iterator<FeatureDescriptor> getFeatureDescriptors(ELContext context, Object base) {
-            return null;
+        public void set(String name, Object value) {
+            context.setVariable(name, value);
         }
 
         @Override
-        public Class<?> getType(ELContext context, Object base, Object property) {
-            return Object.class;
-        }
-
-        @Override
-        public Object getValue(ELContext context, Object base, Object property) {
-            if (base == null && property instanceof String) {
-                String k = (String) property;
-                Object v = ctx.getVariable(k);
-                if (v != null) {
-                    context.setPropertyResolved(true);
-                    return v;
-                }
-            }
-
-            return null;
-        }
-
-        @Override
-        public boolean isReadOnly(ELContext context, Object base, Object property) {
-            return true;
-        }
-
-        @Override
-        public void setValue(ELContext context, Object base, Object property, Object value) {
+        public Object interpolate(Object v) {
+            return context.interpolate(v);
         }
     }
 }

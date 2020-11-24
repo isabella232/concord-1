@@ -28,7 +28,7 @@ import static org.junit.Assert.assertNotNull;
 public class SecretIT extends AbstractServerIT {
 
     @Test(timeout = DEFAULT_TEST_TIMEOUT)
-    public void testPublicKey() throws Exception {
+    public void testOwnerChange() throws Exception {
         String orgName = "org_" + randomString();
 
         OrganizationsApi orgApi = new OrganizationsApi(getApiClient());
@@ -49,7 +49,18 @@ public class SecretIT extends AbstractServerIT {
 
         // ---
 
+        String userName = "myUser_" + randomString();
+
+        UsersApi usersApi = new UsersApi(getApiClient());
+        CreateUserResponse cur = usersApi.createOrUpdate(new CreateUserRequest()
+                .setUsername(userName)
+                .setType(CreateUserRequest.TypeEnum.LOCAL));
+
         SecretsApi secretsApi = new SecretsApi(getApiClient());
+        SecretUpdateRequest req = new SecretUpdateRequest();
+        req.setOwner(new EntityOwner().setId(cur.getId()));
+        secretsApi.update(orgName, secretName, req);
+
         PublicKeyResponse pkr = secretsApi.getPublicKey(orgName, secretName);
 
         assertNotNull(pkr);
@@ -60,6 +71,5 @@ public class SecretIT extends AbstractServerIT {
         secretsApi.delete(orgName, secretName);
         projectsApi.delete(orgName, projectName);
         orgApi.delete(orgName, "yes");
-
     }
 }

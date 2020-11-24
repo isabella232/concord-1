@@ -41,8 +41,8 @@ public interface Profile extends Serializable {
     long serialVersionUID = 1L;
 
     @Value.Default
-    default ProcessConfiguration configuration() {
-        return ProcessConfiguration.builder().build();
+    default ProcessDefinitionConfiguration configuration() {
+        return ProcessDefinitionConfiguration.builder().build();
     }
 
     @Value.Default
@@ -55,13 +55,18 @@ public interface Profile extends Serializable {
         return Collections.emptyMap();
     }
 
+    @Value.Default
+    default Map<String, Form> forms() {
+        return Collections.emptyMap();
+    }
+
     static ImmutableProfile.Builder builder() {
         return ImmutableProfile.builder();
     }
 
     static Profile merge(Profile a, Profile b) {
-        return Profile.builder().from(a)
-                .configuration(ProcessConfiguration.merge(a.configuration(), b.configuration()))
+        return builder().from(a)
+                .configuration(ProcessDefinitionConfiguration.merge(a.configuration(), b.configuration()))
                 .putAllFlows(b.flows())
                 .build();
     }

@@ -99,14 +99,14 @@ public class GithubAuthenticatingFilter extends AuthenticatingFilter {
             return new UsernamePasswordToken();
         }
 
-        String[] algDigest = h.split("=");
+        String[] algDigest = h.split("=", -1);
         if (algDigest.length != 2) {
-            log.warn("createToken -> invalid format of the authorization header. URI: '{}'", req.getRequestURI());
+            log.warn("createToken -> invalid format of the authorization header. URI: '{}'", req.getRequestURI().toString().replaceAll("[\n\r]",""));
             return new UsernamePasswordToken();
         }
 
         if (!"sha1".equals(algDigest[0])) {
-            log.warn("createToken -> invalid algorithm of the authorization header '{}'. URI: '{}'", algDigest[0], req.getRequestURI());
+            log.warn("createToken -> invalid algorithm of the authorization header '{}'. URI: '{}'", algDigest[0].toString().replaceAll("[\n\r]",""), req.getRequestURI().toString().replaceAll("[\n\r]",""));
             return new UsernamePasswordToken();
         }
 
@@ -118,7 +118,7 @@ public class GithubAuthenticatingFilter extends AuthenticatingFilter {
             String digestHex = String.valueOf(Hex.encode(digest));
 
             if (!algDigest[1].equals(digestHex)) {
-                log.error("createToken -> invalid auth digest. Expected: '{}', request: '{}'", digestHex, algDigest[1]);
+                log.error("createToken -> invalid auth digest. Expected: '{}', request: '{}'", digestHex.replaceAll("[\r\n]",""), algDigest[1].replaceAll("[\r\n]",""));
                 return new UsernamePasswordToken();
             }
 
@@ -140,7 +140,7 @@ public class GithubAuthenticatingFilter extends AuthenticatingFilter {
             return new UsernamePasswordToken();
         }
 
-        String[] orgRepo = repoFullName.split("/");
+        String[] orgRepo = repoFullName.split("/", -1);
         if (orgRepo.length != 2) {
             log.error("processSpecificRepo -> invalid repo name '{}', expected org/repo format", repoFullName);
             return new UsernamePasswordToken();
@@ -222,6 +222,11 @@ public class GithubAuthenticatingFilter extends AuthenticatingFilter {
                 @Override
                 public int read() {
                     return byteArrayInputStream.read();
+                }
+                
+                @Override
+                public int read(byte[] b, int buf, int len) {
+                    return byteArrayInputStream.read(b, buf, len);
                 }
 
                 @Override

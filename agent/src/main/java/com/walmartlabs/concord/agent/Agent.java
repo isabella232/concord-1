@@ -20,16 +20,14 @@ package com.walmartlabs.concord.agent;
  * =====
  */
 
-import com.walmartlabs.concord.ApiException;
+import com.google.inject.Injector;
 import com.walmartlabs.concord.agent.Worker.CompletionCallback;
 import com.walmartlabs.concord.agent.cfg.AgentConfiguration;
 import com.walmartlabs.concord.agent.cfg.DockerConfiguration;
 import com.walmartlabs.concord.agent.docker.OrphanSweeper;
-import com.walmartlabs.concord.agent.logging.ProcessLogFactory;
+import com.walmartlabs.concord.agent.guice.WorkerModule;
 import com.walmartlabs.concord.agent.mmode.MaintenanceModeListener;
 import com.walmartlabs.concord.agent.mmode.MaintenanceModeNotifier;
-import com.walmartlabs.concord.client.ClientUtils;
-import com.walmartlabs.concord.client.ProcessApi;
 import com.walmartlabs.concord.client.ProcessEntry.StatusEnum;
 import com.walmartlabs.concord.common.IOUtils;
 import com.walmartlabs.concord.server.queueclient.QueueClient;
@@ -42,6 +40,7 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
@@ -54,13 +53,11 @@ public class Agent {
 
     private static final Logger log = LoggerFactory.getLogger(Agent.class);
 
+    private final Injector injector;
     private final AgentConfiguration agentCfg;
     private final DockerConfiguration dockerCfg;
 
     private final QueueClient queueClient;
-    private final ProcessLogFactory processLogFactory;
-    private final ProcessApi processApi;
-    private final WorkerFactory workerFactory;
     private final ExecutorService executor;
 
     private final Map<UUID, Worker> activeWorkers = new ConcurrentHashMap<>();
@@ -70,20 +67,16 @@ public class Agent {
     private volatile Semaphore workersAvailable; // NOSONAR
 
     @Inject
-    public Agent(AgentConfiguration agentCfg,
+    public Agent(Injector injector,
+                 AgentConfiguration agentCfg,
                  DockerConfiguration dockerCfg,
-                 QueueClient queueClient,
-                 ProcessLogFactory processLogFactory,
-                 ProcessApi processApi,
-                 WorkerFactory workerFactory) {
+                 QueueClient queueClient) {
+
+        this.injector = injector;
 
         this.agentCfg = agentCfg;
         this.dockerCfg = dockerCfg;
         this.queueClient = queueClient;
-
-        this.processLogFactory = processLogFactory;
-        this.processApi = processApi;
-        this.workerFactory = workerFactory;
 
         this.executor = Executors.newCachedThreadPool();
     }
@@ -95,6 +88,7 @@ public class Agent {
         });
     }
 
+    @SuppressWarnings("unused")
     public void stop() {
         queueClient.stop();
         executor.shutdownNow();
@@ -130,8 +124,11 @@ public class Agent {
             JobRequest jobRequest;
             try {
                 jobRequest = take(queueClient);
+            } catch (InterruptedException e) {
+                log.info("run -> interrupted, exiting...");
+                return;
             } catch (Exception e) {
-                log.warn("run -> error while fetching a job: {}", e.getMessage());
+                log.error("run -> error while fetching a job: {}", e.getMessage(), e);
 
                 workersAvailable.release();
 
@@ -150,13 +147,20 @@ public class Agent {
             UUID instanceId = jobRequest.getInstanceId();
 
             // worker will handle the process' lifecycle
-            Worker w = workerFactory.create(jobRequest, createStatusCallback(instanceId, workersAvailable));
+            try {
+                Worker w = injector.createChildInjector(new WorkerModule(agentCfg.getAgentId(), instanceId, jobRequest.getSessionToken()))
+                        .getInstance(WorkerFactory.class)
+                        .create(jobRequest, createStatusCallback(instanceId, workersAvailable));
 
-            // register the worker so we can cancel it later
-            activeWorkers.put(instanceId, w);
+                // register the worker so we can cancel it later
+                activeWorkers.put(instanceId, w);
 
-            // start a new thread to process the job
-            executor.submit(w);
+                // start a new thread to process the job
+                executor.submit(w);
+            } catch (Exception e) {
+                log.error("run -> error while submitting worker: {}", e.getMessage());
+                workersAvailable.release();
+            }
         }
     }
 
@@ -215,9 +219,6 @@ public class Agent {
 
                 activeWorkers.remove(instanceId);
                 workersAvailable.release();
-
-                log.info("onStatusChange -> {}: {}", instanceId, status);
-                updateStatus(instanceId, status);
             }
         };
     }
@@ -232,18 +233,7 @@ public class Agent {
 
         Path workDir = IOUtils.createTempDir(agentCfg.getPayloadDir(), "workDir");
 
-        return JobRequest.from(resp, workDir, processLogFactory);
-    }
-
-    private void updateStatus(UUID instanceId, StatusEnum s) {
-        try {
-            ClientUtils.withRetry(AgentConstants.API_CALL_MAX_RETRIES, AgentConstants.API_CALL_RETRY_DELAY, () -> {
-                processApi.updateStatus(instanceId, agentCfg.getAgentId(), s.name());
-                return null;
-            });
-        } catch (ApiException e) {
-            log.warn("updateStatus ['{}'] -> error while updating status of a job: {}", instanceId, e.getMessage());
-        }
+        return JobRequest.from(resp, workDir);
     }
 
     private void cancel(UUID instanceId) {

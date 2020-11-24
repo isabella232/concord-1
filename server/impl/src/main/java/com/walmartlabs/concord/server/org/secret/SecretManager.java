@@ -20,6 +20,7 @@ package com.walmartlabs.concord.server.org.secret;
  * =====
  */
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.io.ByteStreams;
 import com.walmartlabs.concord.common.secret.BinaryDataSecret;
 import com.walmartlabs.concord.common.secret.KeyPair;
@@ -52,7 +53,10 @@ import com.walmartlabs.concord.server.security.UserPrincipal;
 import com.walmartlabs.concord.server.security.sessionkey.SessionKeyPrincipal;
 import com.walmartlabs.concord.server.user.UserDao;
 import com.walmartlabs.concord.server.user.UserEntry;
+import com.walmartlabs.concord.server.user.UserManager;
+import com.walmartlabs.concord.server.user.UserType;
 import org.apache.shiro.authz.UnauthorizedException;
+import org.jooq.DSLContext;
 import org.sonatype.siesta.ValidationErrorsException;
 
 import javax.inject.Inject;
@@ -65,6 +69,7 @@ import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static com.walmartlabs.concord.server.jooq.Tables.SECRETS;
 import static com.walmartlabs.concord.server.org.secret.SecretDao.InsertMode.INSERT;
@@ -82,6 +87,7 @@ public class SecretManager {
     private final UserDao userDao;
     private final ProjectAccessManager projectAccessManager;
     private final RepositoryDao repositoryDao;
+    private final UserManager userManager;
 
     @Inject
     public SecretManager(PolicyManager policyManager,
@@ -93,7 +99,8 @@ public class SecretManager {
                          SecretStoreProvider secretStoreProvider,
                          UserDao userDao,
                          ProjectAccessManager projectAccessManager,
-                         RepositoryDao repositoryDao) {
+                         RepositoryDao repositoryDao,
+                         UserManager userManager) {
 
         this.policyManager = policyManager;
         this.processQueueManager = processQueueManager;
@@ -105,6 +112,7 @@ public class SecretManager {
         this.auditLog = auditLog;
         this.projectAccessManager = projectAccessManager;
         this.repositoryDao = repositoryDao;
+        this.userManager = userManager;
     }
 
     @WithTimer
@@ -222,17 +230,39 @@ public class SecretManager {
     public DecryptedBinaryData createBinaryData(UUID orgId, UUID projectId, String name, String storePassword,
                                                 InputStream data, SecretVisibility visibility,
                                                 String storeType) throws IOException {
+
         return createBinaryData(orgId, projectId, name, storePassword, data, visibility, storeType, INSERT);
     }
 
     /**
      * Stores a new single value secret.
      */
-    public DecryptedBinaryData createBinaryData(UUID orgId, UUID projectId, String name, String storePassword,
-                                                InputStream data, SecretVisibility visibility,
-                                                String storeType, SecretDao.InsertMode insertMode) throws IOException {
+    public DecryptedBinaryData createBinaryData(UUID orgId,
+                                                UUID projectId,
+                                                String name,
+                                                String storePassword,
+                                                InputStream data,
+                                                SecretVisibility visibility,
+                                                String storeType,
+                                                SecretDao.InsertMode insertMode) throws IOException {
 
-        orgManager.assertAccess(orgId, true);
+        return secretDao.txResult(tx -> createBinaryData(tx, orgId, projectId, name, storePassword, data, visibility, storeType, insertMode));
+    }
+
+    /**
+     * Stores a new single value secret.
+     */
+    public DecryptedBinaryData createBinaryData(DSLContext tx,
+                                                UUID orgId,
+                                                UUID projectId,
+                                                String name,
+                                                String storePassword,
+                                                InputStream data,
+                                                SecretVisibility visibility,
+                                                String storeType,
+                                                SecretDao.InsertMode insertMode) throws IOException {
+
+        orgManager.assertAccess(tx, orgId, true);
 
         int maxSecretDataSize = secretStoreProvider.getMaxSecretDataSize();
         InputStream limitedDataInputStream = ByteStreams.limit(data, maxSecretDataSize + 1L);
@@ -240,7 +270,7 @@ public class SecretManager {
         if (d.getData().length > maxSecretDataSize) {
             throw new IllegalArgumentException("File size exceeds limit of " + maxSecretDataSize + " bytes");
         }
-        UUID id = create(name, orgId, projectId, d, storePassword, visibility, storeType, insertMode);
+        UUID id = create(tx, name, orgId, projectId, d, storePassword, visibility, storeType, insertMode);
         return new DecryptedBinaryData(id);
     }
 
@@ -263,11 +293,25 @@ public class SecretManager {
      */
     public void update(String orgName, String secretName, SecretUpdateRequest req) {
         SecretEntry e;
+
         if (req.id() == null) {
             OrganizationEntry org = orgManager.assertAccess(null, orgName, false);
-            e = assertAccess(org.getId(), null, secretName, ResourceAccessLevel.WRITER, true);
+            e = assertAccess(org.getId(), null, secretName, ResourceAccessLevel.OWNER, true);
         } else {
             e = assertAccess(null, req.id(), null, ResourceAccessLevel.WRITER, true);
+        }
+
+        UserEntry owner = getOwner(req.owner(), null);
+
+        policyManager.checkEntity(e.getOrgId(), req.projectId(), EntityType.SECRET, EntityAction.UPDATE, owner,
+                PolicyUtils.toMap(e.getOrgId(), e.getName(), e.getType(), e.getVisibility(), e.getStoreType()));
+
+        UUID currentOwnerId = e.getOwner() != null ? e.getOwner().id() : null;
+        UUID updatedOwnerId = owner != null ? owner.getId() : null;
+
+        if (updatedOwnerId != null && !updatedOwnerId.equals(currentOwnerId)) {
+            OrganizationEntry org = orgManager.assertAccess(null, orgName, false);
+            assertAccess(org.getId(), null, secretName, ResourceAccessLevel.OWNER, true);
         }
 
         String currentPassword = req.storePassword();
@@ -326,38 +370,42 @@ public class SecretManager {
 
         UUID orgIdUpdate = organizationEntry != null ? organizationEntry.getId() : e.getOrgId();
 
-        UUID projectId = req.projectId();
+        UUID effectiveProjectId = e.getProjectId();
+        if (req.projectId() != null) {
+            effectiveProjectId = req.projectId();
+        }
+
         String projectName = req.projectName();
 
         if (!orgIdUpdate.equals(e.getOrgId())) {
             // set the project ID and project name as null when the updated org ID is not same as the current org ID
             // when a secret is changing orgs, the project link must be set to null
-            projectId = null;
+            effectiveProjectId = null;
             projectName = null;
         }
 
         if (projectName != null && projectName.trim().isEmpty()) {
-            // empty project name is same as null project
+            // empty project name means "remove the project link"
+            effectiveProjectId = null;
             projectName = null;
         }
 
-        if (projectId != null || projectName != null) {
-            ProjectEntry entry = projectAccessManager.assertAccess(e.getOrgId(), projectId, projectName, ResourceAccessLevel.READER, true);
-            projectId = entry.getId();
+        if (effectiveProjectId != null || projectName != null) {
+            ProjectEntry entry = projectAccessManager.assertAccess(e.getOrgId(), effectiveProjectId, projectName, ResourceAccessLevel.READER, true);
+            effectiveProjectId = entry.getId();
             if (!entry.getOrgId().equals(e.getOrgId())) {
-                throw new ValidationErrorsException("Project -> " + entry.getName() + " does not belong to organization -> " + orgName);
+                throw new ValidationErrorsException("Project '" + entry.getName() + "' does not belong to organization '" + orgName + "'");
             }
         }
 
-        UUID finalProjectId = projectId;
-
+        UUID finalProjectId = effectiveProjectId;
         secretDao.tx(tx -> {
             if (!orgIdUpdate.equals(e.getOrgId())) {
                 // update repository mapping to null when org is changing
                 repositoryDao.clearSecretMappingBySecretId(tx, e.getId());
             }
 
-            secretDao.update(tx, e.getId(), req.name(), newEncryptedData, req.visibility(), finalProjectId, orgIdUpdate);
+            secretDao.update(tx, e.getId(), req.name(), updatedOwnerId, newEncryptedData, req.visibility(), finalProjectId, orgIdUpdate);
         });
 
         Map<String, Object> changes = DiffUtils.compare(e, secretDao.get(e.getId()));
@@ -375,12 +423,14 @@ public class SecretManager {
      * Removes an existing secret.
      */
     public void delete(UUID orgId, String secretName) {
-        SecretEntry e = assertAccess(orgId, null, secretName, ResourceAccessLevel.WRITER, true);
+        SecretEntry e = assertAccess(orgId, null, secretName, ResourceAccessLevel.OWNER, true);
 
-        // delete the content first
-        getSecretStore(e.getStoreType()).delete(e.getId());
-        // now delete secret information from secret table
-        secretDao.delete(e.getId());
+        secretDao.tx(tx -> {
+            // delete the content first
+            getSecretStore(e.getStoreType()).delete(tx, e.getId());
+            // now delete secret information from secret table
+            secretDao.delete(tx, e.getId());
+        });
 
         auditLog.add(AuditObject.SECRET, AuditAction.DELETE)
                 .field("orgId", e.getOrgId())
@@ -477,7 +527,27 @@ public class SecretManager {
         secretDao.upsertAccessLevel(secretId, teamId, level);
     }
 
-    private UUID create(String name, UUID orgId, UUID projectId, Secret s, String password, SecretVisibility visibility, String storeType, SecretDao.InsertMode insertMode) {
+    private UUID create(String name,
+                        UUID orgId,
+                        UUID projectId,
+                        Secret s,
+                        String password,
+                        SecretVisibility visibility,
+                        String storeType,
+                        SecretDao.InsertMode insertMode) {
+        return secretDao.txResult(tx -> create(tx, name, orgId, projectId, s, password, visibility, storeType, insertMode));
+    }
+
+    private UUID create(DSLContext tx,
+                        String name,
+                        UUID orgId,
+                        UUID projectId,
+                        Secret s,
+                        String password,
+                        SecretVisibility visibility,
+                        String storeType,
+                        SecretDao.InsertMode insertMode) {
+
         byte[] data;
 
         SecretType type;
@@ -506,13 +576,13 @@ public class SecretManager {
         policyManager.checkEntity(orgId, projectId, EntityType.SECRET, EntityAction.CREATE, owner,
                 PolicyUtils.toMap(orgId, name, type, visibility, storeType));
 
-        UUID id = secretDao.insert(orgId, projectId, name, owner.getId(), type, encryptedByType, storeType, visibility, insertMode);
+        UUID id = secretDao.insert(tx, orgId, projectId, name, owner.getId(), type, encryptedByType, storeType, visibility, insertMode);
         try {
-            getSecretStore(storeType).store(id, ab);
+            getSecretStore(storeType).store(tx, id, ab);
         } catch (Exception e) {
             // we can't use the transaction here because the store may update the record in the database independently,
             // as our transaction has not yet finalized so we may end up having exception in that case
-            secretDao.delete(id);
+            secretDao.delete(tx, id);
             throw new RuntimeException(e);
         }
 
@@ -548,6 +618,8 @@ public class SecretManager {
                 secretDao.upsertAccessLevel(tx, secretId, e.getTeamId(), e.getLevel());
             }
         });
+
+        addAuditLog(secretId, entries, isReplace);
     }
 
     private byte[] getPwd(String pwd) {
@@ -713,6 +785,38 @@ public class SecretManager {
         public UUID getId() {
             return id;
         }
+    }
+
+    public UserEntry getOwner(EntityOwner owner, UserEntry defaultOwner) {
+        if (owner == null) {
+            return defaultOwner;
+        }
+
+        if (owner.id() != null) {
+            return userManager.get(owner.id())
+                    .orElseThrow(() -> new ValidationErrorsException("User not found: " + owner.id()));
+        }
+
+        if (owner.username() != null) {
+            // TODO don't assume LDAP here
+            return userManager.get(owner.username(), owner.userDomain(), UserType.LDAP)
+                    .orElseThrow(() -> new ConcordApplicationException("User not found: " + owner.username()));
+        }
+
+        return defaultOwner;
+    }
+
+    private void addAuditLog(UUID secretId, Collection<ResourceAccessEntry> entries, boolean isReplace) {
+        List<ImmutableMap<String, ? extends Serializable>> teams = entries.stream()
+                .map(e -> ImmutableMap.of("id", e.getTeamId(), "level", e.getLevel()))
+                .collect(Collectors.toList());
+
+        auditLog.add(AuditObject.SECRET, AuditAction.UPDATE)
+                .field("secretId", secretId)
+                .field("access", ImmutableMap.of(
+                        "replace", isReplace,
+                        "teams", teams))
+                .log();
     }
 
     /**

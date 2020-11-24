@@ -27,15 +27,19 @@ import com.google.common.hash.HashCode;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
-import com.walmartlabs.concord.agent.*;
+import com.walmartlabs.concord.agent.ConfiguredJobRequest;
+import com.walmartlabs.concord.agent.ExecutionException;
+import com.walmartlabs.concord.agent.JobInstance;
+import com.walmartlabs.concord.agent.Utils;
 import com.walmartlabs.concord.agent.executors.JobExecutor;
 import com.walmartlabs.concord.agent.executors.runner.ProcessPool.ProcessEntry;
+import com.walmartlabs.concord.agent.guice.AgentDependencyManager;
 import com.walmartlabs.concord.agent.logging.ProcessLog;
 import com.walmartlabs.concord.agent.logging.ProcessLogFactory;
-import com.walmartlabs.concord.agent.postprocessing.JobPostProcessor;
+import com.walmartlabs.concord.agent.remote.AttachmentsUploader;
 import com.walmartlabs.concord.common.IOUtils;
+import com.walmartlabs.concord.common.Posix;
 import com.walmartlabs.concord.dependencymanager.DependencyEntity;
-import com.walmartlabs.concord.dependencymanager.DependencyManager;
 import com.walmartlabs.concord.policyengine.CheckResult;
 import com.walmartlabs.concord.policyengine.DependencyRule;
 import com.walmartlabs.concord.policyengine.PolicyEngine;
@@ -46,9 +50,11 @@ import org.immutables.value.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -61,7 +67,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.walmartlabs.concord.common.DockerProcessBuilder.CONCORD_DOCKER_LOCAL_MODE_KEY;
-import static com.walmartlabs.concord.agent.postprocessing.JobPostProcessor.*;
+
 /**
  * Executes jobs using concord-runner runtime.
  */
@@ -69,11 +75,11 @@ public class RunnerJobExecutor implements JobExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(RunnerJobExecutor.class);
 
-    protected final DependencyManager dependencyManager;
+    protected final AgentDependencyManager dependencyManager;
 
     private final RunnerJobExecutorConfiguration cfg;
     private final DefaultDependencies defaultDependencies;
-    private final List<JobPostProcessor> postProcessors;
+    private final AttachmentsUploader attachmentsUploader;
     private final ProcessPool processPool;
     private final ProcessLogFactory logFactory;
     private final ExecutorService executor;
@@ -81,9 +87,9 @@ public class RunnerJobExecutor implements JobExecutor {
     private final ObjectMapper objectMapper;
 
     public RunnerJobExecutor(RunnerJobExecutorConfiguration cfg,
-                             DependencyManager dependencyManager,
+                             AgentDependencyManager dependencyManager,
                              DefaultDependencies defaultDependencies,
-                             List<JobPostProcessor> postProcessors,
+                             AttachmentsUploader attachmentsUploader,
                              ProcessPool processPool,
                              ProcessLogFactory processLogFactory,
                              ExecutorService executor) {
@@ -91,7 +97,7 @@ public class RunnerJobExecutor implements JobExecutor {
         this.cfg = cfg;
         this.dependencyManager = dependencyManager;
         this.defaultDependencies = defaultDependencies;
-        this.postProcessors = postProcessors;
+        this.attachmentsUploader = attachmentsUploader;
         this.processPool = processPool;
         this.logFactory = processLogFactory;
         this.executor = executor;
@@ -99,11 +105,6 @@ public class RunnerJobExecutor implements JobExecutor {
         // sort JSON keys for consistency
         this.objectMapper = new ObjectMapper()
                 .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    }
-
-    @Override
-    public JobRequest.Type acceptsType() {
-        return JobRequest.Type.RUNNER;
     }
 
     @Override
@@ -121,7 +122,7 @@ public class RunnerJobExecutor implements JobExecutor {
             job = job.withDependencies(resolvedDeps);
 
             pe = buildProcessEntry(job);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.warn("exec ['{}'] -> process error: {}", job.getInstanceId(), e.getMessage());
 
             job.getLog().error("Process startup error: {}", e.getMessage());
@@ -134,20 +135,25 @@ public class RunnerJobExecutor implements JobExecutor {
         // continue the execution in a separate thread to make the process cancellable
         RunnerJob _job = job;
         Future<?> f = executor.submit(() -> {
+            boolean uploadAttachmentsOnError = true;
+
             try {
                 exec(_job, pe);
-                executePostProcessors(_job.getInstanceId(), pe);
-            } catch (JobPostProcessorException e) {
-                throw new RuntimeException(e);
+
+                uploadAttachmentsOnError = false;
+                uploadAttachments(_job.getInstanceId(), pe);
             } catch (Throwable t) {
-                try {
-                    executePostProcessors(_job.getInstanceId(), pe);
-                } catch (JobPostProcessorException e) {
-                    // ignore
+                if (uploadAttachmentsOnError) {
+                    try {
+                        uploadAttachments(_job.getInstanceId(), pe);
+                    } catch (Exception e) {
+                        // ignore
+                    }
                 }
 
                 throw new RuntimeException(t);
             } finally {
+                persistWorkDir(_job.getInstanceId(), pe.getProcDir());
                 cleanup(_job.getInstanceId(), pe);
                 cleanup(_job);
             }
@@ -157,17 +163,55 @@ public class RunnerJobExecutor implements JobExecutor {
         return new JobInstanceImpl(f, pe.getProcess());
     }
 
-    private void executePostProcessors(UUID instanceId, ProcessEntry pe) throws JobPostProcessorException {
+    private void persistWorkDir(UUID instanceId, Path src) {
+        Path persistentWorkDir = cfg.persistentWorkDir();
+
+        if (persistentWorkDir == null) {
+            return;
+        }
+
+        Path dst = persistentWorkDir.resolve(instanceId.toString());
+
+        try {
+            if (!Files.exists(dst)) {
+                Files.createDirectories(dst);
+            }
+
+            log.info("exec ['{}'] -> persisting the payload directory into {}...", instanceId, dst);
+            IOUtils.copy(src, dst);
+
+            // persistentWorkDir is mostly useful when the Agent is running in a container
+            // typically it is running as PID 456 - all files created by the process
+            // are created using PID 456 and won't be readable by the host user
+
+            // therefore, we need to make all files readable by all users
+            // and that's why runner.persistentWorkDir shouldn't be used in prod
+
+            Files.walk(dst).forEach(f -> {
+                try {
+                    if (Files.isDirectory(f)) {
+                        Files.setPosixFilePermissions(f, Posix.posix(0755));
+                    } else if (Files.isRegularFile(f)) {
+                        Files.setPosixFilePermissions(f, Posix.posix(0644));
+                    }
+                } catch (IOException e) {
+                    log.warn("persistWorkDir -> can't update permissions for {}: {}", f, e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            log.warn("persistWorkDir -> failed to copy {} into {}: {}", src, dst, e.getMessage());
+        }
+    }
+
+
+    private void uploadAttachments(UUID instanceId, ProcessEntry pe) {
         Path payloadDir = pe.getProcDir().resolve(Constants.Files.PAYLOAD_DIR_NAME);
 
-        // run all job post processors, e.g. the attachment uploader
         try {
-            for (JobPostProcessor p : postProcessors) {
-                p.process(instanceId, payloadDir);
-            }
-        } catch (Throwable e) {
-            log.error("exec ['{}'] -> postprocessing error: {}", instanceId, e.getMessage());
-            throw new JobPostProcessorException("Postprocessing error: " + e.getMessage());
+            attachmentsUploader.upload(instanceId, payloadDir);
+        } catch (Exception e) {
+            log.error("uploadAttachments ['{}'] -> error: {}", instanceId, e.getMessage());
+            throw new RuntimeException("Error while uploading attachments: " + e.getMessage());
         }
     }
 
@@ -330,7 +374,8 @@ public class RunnerJobExecutor implements JobExecutor {
                 .runnerPath(cfg.runnerPath().toAbsolutePath())
                 .runnerCfgPath(runnerCfgFile.toAbsolutePath())
                 .mainClass(cfg.runnerMainClass())
-                .jvmParams(jvmParams).build();
+                .jvmParams(jvmParams)
+                .build();
     }
 
     private ProcessEntry fork(RunnerJob job, String[] cmd) throws ExecutionException, IOException {
@@ -520,7 +565,7 @@ public class RunnerJobExecutor implements JobExecutor {
         HashFunction f = Hashing.sha256();
         Hasher h = f.newHasher();
         for (String s : as) {
-            h.putString(s, Charsets.UTF_8);
+            h.putString(s, StandardCharsets.UTF_8);
         }
         return h.hash();
     }
@@ -616,6 +661,9 @@ public class RunnerJobExecutor implements JobExecutor {
         }
 
         long maxHeartbeatInterval();
+
+        @Nullable
+        Path persistentWorkDir();
 
         static ImmutableRunnerJobExecutorConfiguration.Builder builder() {
             return ImmutableRunnerJobExecutorConfiguration.builder();

@@ -34,6 +34,7 @@ import com.walmartlabs.concord.server.MultipartUtils;
 import com.walmartlabs.concord.server.OffsetDateTimeParam;
 import com.walmartlabs.concord.server.cfg.ProcessConfiguration;
 import com.walmartlabs.concord.server.cfg.SecretStoreConfiguration;
+import com.walmartlabs.concord.server.events.ExpressionUtils;
 import com.walmartlabs.concord.server.org.OrganizationManager;
 import com.walmartlabs.concord.server.org.ResourceAccessLevel;
 import com.walmartlabs.concord.server.org.project.EncryptedProjectValueManager;
@@ -423,11 +424,13 @@ public class ProcessResource implements Resource {
             req = ConfigurationUtils.toNested(saveAs, req);
         }
 
+        req = ExpressionUtils.escapeMap(req);
+
         Payload payload;
         try {
             payload = payloadManager.createResumePayload(processKey, eventName, req);
         } catch (IOException e) {
-            log.error("resume ['{}', '{}'] -> error creating a payload: {}", instanceId, eventName, e);
+            log.error("resume ['{}', '{}'] -> error creating a payload: {}", instanceId.toString().replaceAll("[\n\r]",""), eventName.toString().replaceAll("[\n\r]",""), e.toString().replaceAll("[\n\r]",""));
             throw new ConcordApplicationException("Error creating a payload", e);
         }
 
@@ -469,7 +472,7 @@ public class ProcessResource implements Resource {
         UUID projectId = parent.projectId();
         UserPrincipal userPrincipal = UserPrincipal.assertCurrent();
         Set<String> handlers = parent.handlers();
-        Imports imports = parent.imports();
+        Imports imports = queueDao.getImports(parentProcessKey);
 
         Payload payload;
         try {
@@ -497,7 +500,7 @@ public class ProcessResource implements Resource {
     public ProcessEntry waitForCompletion(@ApiParam @PathParam("id") UUID instanceId,
                                           @ApiParam @QueryParam("timeout") @DefaultValue("-1") long timeout) {
 
-        log.info("waitForCompletion ['{}', {}] -> waiting...", instanceId, timeout);
+        log.info("waitForCompletion ['{}', {}] -> waiting...", instanceId.toString().replaceAll("[\n\r]",""), Long.toString(timeout).replaceAll("[\n\r]",""));
 
         long t1 = System.currentTimeMillis();
 
@@ -516,7 +519,7 @@ public class ProcessResource implements Resource {
             if (timeout > 0) {
                 long t2 = System.currentTimeMillis();
                 if (t2 - t1 >= timeout) {
-                    log.warn("waitForCompletion ['{}', {}] -> timeout, last status: {}", instanceId, timeout, s);
+                    log.warn("waitForCompletion ['{}', {}] -> timeout, last status: {}", instanceId.toString().replaceAll("[\n\r]",""), Long.toString(timeout).replaceAll("[\n\r]",""), s.toString().replaceAll("[\n\r]",""));
                     throw new ConcordApplicationException(Response.status(Status.REQUEST_TIMEOUT).entity(r).build());
                 }
             }
@@ -732,7 +735,7 @@ public class ProcessResource implements Resource {
      * @param initiator
      * @param limit
      * @return
-     * @deprecated use {@link ProcessResourceV2#list(UUID, String, UUID, String, IsoDateParam, IsoDateParam, Set, ProcessStatus, String, UUID, Set, int, int, UriInfo)}
+     * @deprecated use {@link ProcessResourceV2#list(UUID, String, UUID, String, UUID, String, OffsetDateTimeParam, OffsetDateTimeParam, Set, ProcessStatus, String, UUID, Set, int, int, UriInfo)}
      */
     @GET
     @ApiOperation(value = "List processes for all user's organizations", responseContainer = "list", response = ProcessEntry.class)
@@ -802,7 +805,7 @@ public class ProcessResource implements Resource {
      * Retrieves a process' log.
      *
      * @param instanceId
-     * @param range
+     * @param rangeHeader
      * @return
      * @see ProcessLogResourceV2
      * @deprecated in favor of the /api/v2/process/{id}/log* endpoints
@@ -958,14 +961,14 @@ public class ProcessResource implements Resource {
                 try {
                     IOUtils.deleteRecursively(tmpDir);
                 } catch (IOException e) {
-                    log.warn("uploadAttachments -> cleanup error: {}", e.getMessage());
+                    log.warn("uploadAttachments -> cleanup error: {}", e.getMessage().replaceAll("[\r\n]",""));
                 }
             }
             if (tmpIn != null) {
                 try {
                     Files.delete(tmpIn);
                 } catch (IOException e) {
-                    log.warn("uploadAttachments -> cleanup error: {}", e.getMessage());
+                    log.warn("uploadAttachments -> cleanup error: {}", e.getMessage().replaceAll("[\r\n]",""));
                 }
             }
         }

@@ -56,43 +56,60 @@ public class OrganizationDao extends AbstractDao {
     }
 
     @Override
+    protected void tx(Tx t) {
+        super.tx(t);
+    }
+
+    @Override
     public <T> T txResult(TxResult<T> t) {
         return super.txResult(t);
     }
 
     public OrganizationEntry get(UUID id) {
         try (DSLContext tx = DSL.using(cfg)) {
-            Organizations o = ORGANIZATIONS.as("o");
-            Users u = USERS.as("u");
-
-            return tx.select(o.ORG_ID, o.ORG_NAME, o.OWNER_ID, u.USERNAME, u.DOMAIN, u.DISPLAY_NAME, u.USER_TYPE, o.VISIBILITY, o.META, o.ORG_CFG)
-                    .from(o)
-                    .leftJoin(u).on(u.USER_ID.eq(o.OWNER_ID))
-                    .where(o.ORG_ID.eq(id))
-                    .fetchOne(this::toEntry);
+            return get(tx, id);
         }
+    }
+
+    public OrganizationEntry get(DSLContext tx, UUID id) {
+        Organizations o = ORGANIZATIONS.as("o");
+        Users u = USERS.as("u");
+
+        return tx.select(o.ORG_ID, o.ORG_NAME, o.OWNER_ID, u.USERNAME, u.DOMAIN, u.DISPLAY_NAME, u.USER_TYPE, o.VISIBILITY, o.META, o.ORG_CFG)
+                .from(o)
+                .leftJoin(u).on(u.USER_ID.eq(o.OWNER_ID))
+                .where(o.ORG_ID.eq(id))
+                .fetchOne(this::toEntry);
     }
 
     public UUID getId(String name) {
         try (DSLContext tx = DSL.using(cfg)) {
-            return tx.select(ORGANIZATIONS.ORG_ID)
-                    .from(ORGANIZATIONS)
-                    .where(ORGANIZATIONS.ORG_NAME.eq(name))
-                    .fetchOne(ORGANIZATIONS.ORG_ID);
+            return getId(tx, name);
         }
+    }
+
+    public UUID getId(DSLContext tx, String name) {
+        return tx.select(ORGANIZATIONS.ORG_ID)
+                .from(ORGANIZATIONS)
+                .where(ORGANIZATIONS.ORG_NAME.eq(name))
+                .fetchOne(ORGANIZATIONS.ORG_ID);
     }
 
     public OrganizationEntry getByName(String name) {
         try (DSLContext tx = DSL.using(cfg)) {
-            Organizations o = ORGANIZATIONS.as("o");
-            Users u = USERS.as("u");
-
-            return tx.select(o.ORG_ID, o.ORG_NAME, o.OWNER_ID, u.USERNAME, u.DOMAIN, u.DISPLAY_NAME, u.USER_TYPE, o.VISIBILITY, o.META, o.ORG_CFG)
-                    .from(o)
-                    .leftJoin(u).on(u.USER_ID.eq(o.OWNER_ID))
-                    .where(o.ORG_NAME.eq(name))
-                    .fetchOne(this::toEntry);
+            return getByName(tx, name);
         }
+    }
+
+    public OrganizationEntry getByName(DSLContext tx, String name) {
+        Organizations o = ORGANIZATIONS.as("o");
+        Users u = USERS.as("u");
+
+        return tx.select(o.ORG_ID, o.ORG_NAME, o.OWNER_ID, u.USERNAME, u.DOMAIN, u.DISPLAY_NAME, u.USER_TYPE, o.VISIBILITY, o.META, o.ORG_CFG)
+                .from(o)
+                .leftJoin(u).on(u.USER_ID.eq(o.OWNER_ID))
+                .where(o.ORG_NAME.eq(name))
+                .fetchOne(this::toEntry);
     }
 
     public Map<String, Object> getConfiguration(UUID orgId) {

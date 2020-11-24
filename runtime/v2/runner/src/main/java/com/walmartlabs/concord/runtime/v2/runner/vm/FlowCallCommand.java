@@ -22,6 +22,7 @@ package com.walmartlabs.concord.runtime.v2.runner.vm;
 
 import com.walmartlabs.concord.runtime.v2.model.FlowCall;
 import com.walmartlabs.concord.runtime.v2.model.FlowCallOptions;
+import com.walmartlabs.concord.runtime.v2.sdk.ProcessConfiguration;
 import com.walmartlabs.concord.runtime.v2.model.ProcessDefinition;
 import com.walmartlabs.concord.runtime.v2.runner.compiler.CompilerUtils;
 import com.walmartlabs.concord.runtime.v2.runner.el.EvalContext;
@@ -32,8 +33,8 @@ import com.walmartlabs.concord.runtime.v2.sdk.Context;
 import com.walmartlabs.concord.svm.Runtime;
 import com.walmartlabs.concord.svm.*;
 
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class FlowCallCommand extends StepCommand<FlowCall> {
 
@@ -61,10 +62,11 @@ public class FlowCallCommand extends StepCommand<FlowCall> {
         // the called flow's steps
         Compiler compiler = runtime.getService(Compiler.class);
         ProcessDefinition pd = runtime.getService(ProcessDefinition.class);
+        ProcessConfiguration pc = runtime.getService(ProcessConfiguration.class);
 
-        Command steps = CompilerUtils.compile(compiler, pd, flowName);
+        Command steps = CompilerUtils.compile(compiler, pc, pd, flowName);
 
-        Map<String, Object> input = VMUtils.prepareInput(ee, ctx, opts.input());
+        Map<String, Object> input = VMUtils.prepareInput(ee, ctx, Objects.requireNonNull(opts).input());
 
         // the call's frame should be a "root" frame
         // all local variables will have this frame as their base
@@ -74,43 +76,13 @@ public class FlowCallCommand extends StepCommand<FlowCall> {
                 .locals(input)
                 .build();
 
-        // an "out" handler
-        Command processOutVars = new ProcessOutVariablesCommand(opts.out(), innerFrame);
+        // an "out" handler:
+        // grab the out variable from the called flow's frame
+        // and put it into the callee's frame
+        Command processOutVars = new CopyVariablesCommand(opts.out(), innerFrame, null);
 
         // push the out handler first so it executes after the called flow's frame is done
         state.peekFrame(threadId).push(processOutVars);
         state.pushFrame(threadId, innerFrame);
-    }
-
-    public static class ProcessOutVariablesCommand implements Command {
-
-        private static final long serialVersionUID = 1L;
-
-        private final List<String> outVars;
-        private final Frame innerFrame;
-
-        public ProcessOutVariablesCommand(List<String> outVars, Frame innerFrame) {
-            this.outVars = outVars;
-            this.innerFrame = innerFrame;
-        }  // TODO refactor
-
-        @Override
-        public void eval(Runtime runtime, State state, ThreadId threadId) {
-            Frame outerFrame = state.peekFrame(threadId);
-            outerFrame.pop();
-
-            if (outVars.isEmpty()) {
-                return;
-            }
-
-            for (String outVar : outVars) {
-                // grab the out variable from the called flow's frame
-                if (innerFrame.hasLocal(outVar)) {
-                    Object v = innerFrame.getLocal(outVar);
-                    // and put it into the callee's frame
-                    VMUtils.putLocal(outerFrame, outVar, v);
-                }
-            }
-        }
     }
 }

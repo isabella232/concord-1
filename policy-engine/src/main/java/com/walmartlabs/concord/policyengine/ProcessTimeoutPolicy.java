@@ -41,7 +41,12 @@ public class ProcessTimeoutPolicy {
             return CheckResult.success();
         }
 
-        if (processTimeout >= parseTimeout(rule.getMax())) {
+        Long maxTimeout = parseTimeout(rule.getMax());
+        if (maxTimeout == null) {
+            return CheckResult.success();
+        }
+        
+        if (processTimeout >= maxTimeout) {
             return CheckResult.error(new CheckResult.Item<>(rule, timeout));
         }
         return CheckResult.success();

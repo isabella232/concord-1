@@ -82,16 +82,20 @@ public final class MetadataUtils {
                     q.addConditions(jsonbText(column, f.key()).endsWith(f.value()).not());
                     break;
                 }
+                //TODO: Define Default Behaviour
+                default:
+                    break;
             }
         }
     }
 
     private static MetadataFilter parseMetadataFilter(String key, String value) {
         ImmutableMetadataFilter.Builder b = MetadataFilter.builder()
+                .key(key)
                 .value(value);
 
         if (!key.contains(".")) {
-            return b.key(key).build();
+            return b.build();
         }
 
         for (FilterUtils.SuffixMapping m : FilterUtils.SUFFIX_MAPPINGS) {
@@ -101,6 +105,7 @@ public final class MetadataUtils {
             }
         }
 
-        throw new IllegalArgumentException("Invalid metadata key: " + key);
+        // nested filter
+        return b.build();
     }
 }

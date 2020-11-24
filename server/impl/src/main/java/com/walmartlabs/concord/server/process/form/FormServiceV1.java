@@ -28,8 +28,7 @@ import com.walmartlabs.concord.sdk.MapUtils;
 import com.walmartlabs.concord.server.process.Payload;
 import com.walmartlabs.concord.server.process.PayloadManager;
 import com.walmartlabs.concord.server.process.ProcessException;
-import com.walmartlabs.concord.server.process.pipelines.ResumePipeline;
-import com.walmartlabs.concord.server.process.pipelines.processors.Chain;
+import com.walmartlabs.concord.server.process.ProcessManager;
 import com.walmartlabs.concord.server.process.queue.ProcessKeyCache;
 import com.walmartlabs.concord.server.process.state.ProcessStateManager;
 import com.walmartlabs.concord.server.sdk.PartialProcessKey;
@@ -66,20 +65,22 @@ public class FormServiceV1 {
     private final ProcessStateManager stateManager;
     private final UserManager userManager;
     private final FormAccessManager formAccessManager;
-    private final Chain resumePipeline;
+    private final ProcessManager processManager;
     private final ProcessKeyCache processKeyCache;
 
     @Inject
     public FormServiceV1(PayloadManager payloadManager,
                          ProcessStateManager stateManager,
-                         UserManager userManager, FormAccessManager formAccessManager,
-                         ResumePipeline resumePipeline, ProcessKeyCache processKeyCache) {
+                         UserManager userManager,
+                         FormAccessManager formAccessManager,
+                         ProcessManager processManager,
+                         ProcessKeyCache processKeyCache) {
 
         this.payloadManager = payloadManager;
         this.stateManager = stateManager;
         this.userManager = userManager;
         this.formAccessManager = formAccessManager;
-        this.resumePipeline = resumePipeline;
+        this.processManager = processManager;
         this.processKeyCache = processKeyCache;
     }
 
@@ -222,28 +223,8 @@ public class FormServiceV1 {
         return result;
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> merge(Form form, Map<String, Object> data) {
-        String formName = form.getFormDefinition().getName();
-
-        Map<String, Object> env = form.getEnv();
-        if (env == null) {
-            env = Collections.emptyMap();
-        }
-
-        Map<String, Object> formState = (Map<String, Object>) env.get(formName);
-        if (formState == null) {
-            formState = Collections.emptyMap();
-        }
-
-        Map<String, Object> options = form.getOptions();
-        Map<String, Object> extraValues = options != null ? (Map<String, Object>) options.get("values") : null;
-
-        // merge the initial form values and the "extra" values, provided
-        // in the "values" option of the form
-        Map<String, Object> a = new HashMap<>(formState);
-        Map<String, Object> b = new HashMap<>(extraValues != null ? extraValues : Collections.emptyMap());
-        ConfigurationUtils.merge(a, b);
+        Map<String, Object> a = FormUtils.values(form);
 
         // overwrite the collected values with the submitted data
         Map<String, Object> c = new HashMap<>(data != null ? data : Collections.emptyMap());
@@ -260,7 +241,7 @@ public class FormServiceV1 {
             throw new ExecutionException("Error while creating a payload for: " + processKey, e);
         }
 
-        resumePipeline.process(payload);
+        processManager.resume(payload);
     }
 
     private FormValidator createFormValidator(ProcessKey processKey, String formName) {

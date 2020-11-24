@@ -20,6 +20,7 @@ package com.walmartlabs.concord.cli.runner;
  * =====
  */
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.walmartlabs.concord.runtime.v2.sdk.SecretService;
 import com.walmartlabs.concord.sdk.Constants;
 
@@ -27,20 +28,28 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
-public class CliSecretService {
+public class CliSecretService implements SecretService {
 
+    private final Path workDir;
     private final Path secretStoreDir;
     private final VaultProvider vaultProvider;
 
-    public CliSecretService(Path secretStoreDir, VaultProvider vaultProvider) {
+    private final ObjectMapper om = new ObjectMapper();
+
+    public CliSecretService(Path workDir, Path secretStoreDir, VaultProvider vaultProvider) {
+        this.workDir = workDir;
         this.secretStoreDir = secretStoreDir;
         this.vaultProvider = vaultProvider;
     }
 
-    public SecretService.KeyPair exportKeyAsFile(Path workDir, String orgName, String name) throws Exception {
-        Path publicKey = toSecretPath(orgName, name + ".pub");
-        Path privateKey = toSecretPath(orgName, name);
+    @Override
+    public SecretService.KeyPair exportKeyAsFile(String orgName, String secretName, String password) throws Exception {
+        Path publicKey = toSecretPath(orgName, secretName + ".pub");
+        Path privateKey = toSecretPath(orgName, secretName);
 
         if (Files.notExists(publicKey)) {
             throw new RuntimeException("Public key '" + publicKey + "' not found");
@@ -51,8 +60,8 @@ public class CliSecretService {
         }
 
         Path tmpDir = assertTmpDir(workDir);
-        Path tmpPublicKey = tmpDir.resolve(name + ".pub");
-        Path tmpPrivateKey = tmpDir.resolve(name);
+        Path tmpPublicKey = tmpDir.resolve(secretName + ".pub");
+        Path tmpPrivateKey = tmpDir.resolve(secretName);
         Files.copy(publicKey, tmpPublicKey, StandardCopyOption.REPLACE_EXISTING);
         Files.copy(privateKey, tmpPrivateKey, StandardCopyOption.REPLACE_EXISTING);
 
@@ -62,28 +71,104 @@ public class CliSecretService {
                 .build();
     }
 
-    public String decryptString(String encryptedString) {
-        return vaultProvider.getValue(encryptedString);
-    }
-
-    public String exportAsString(String orgName, String name) throws IOException {
-        Path secretPath = toSecretPath(orgName, name);
-        if (Files.notExists(secretPath)) {
-            throw new RuntimeException("Secret '" + secretPath + "' not found");
-        }
+    @Override
+    public String exportAsString(String orgName, String secretName, String password) throws IOException {
+        Path secretPath = assertSecret(orgName, secretName);
         return new String(Files.readAllBytes(secretPath)).trim();
     }
 
-    public Path exportAsFile(Path workDir, String orgName, String name) throws IOException {
-        Path secretPath = toSecretPath(orgName, name);
-        if (Files.notExists(secretPath)) {
-            throw new RuntimeException("Secret '" + secretPath + "' not found");
-        }
+    @Override
+    public Path exportAsFile(String orgName, String secretName, String password) throws IOException {
+        Path secretPath = assertSecret(orgName, secretName);
 
         Path tmpDir = assertTmpDir(workDir);
         Path dest = Files.createTempFile(tmpDir, "file", ".bin");
         Files.copy(secretPath, dest, StandardCopyOption.REPLACE_EXISTING);
         return dest;
+    }
+
+    @Override
+    public String decryptString(String encryptedValue) {
+        return vaultProvider.getValue(encryptedValue);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public UsernamePassword exportCredentials(String orgName, String secretName, String password) {
+        Path secretPath = assertSecret(orgName, secretName);
+
+        try {
+            Map<String, String> up = om.readValue(secretPath.toFile(), Map.class);
+            return UsernamePassword.of(up.get("username"), up.get("password"));
+        } catch (IOException e) {
+            throw new RuntimeException("Invalid secret '" + orgName + "/" + secretName + "' ('" + secretPath + "') format: " +e.getMessage());
+        }
+    }
+
+    @Override
+    public String encryptString(String orgName, String projectName, String value) {
+        throw new UnsupportedOperationException("Not supported yet");
+    }
+
+    @Override
+    public SecretCreationResult createKeyPair(SecretParams secret, KeyPair keyPair) throws Exception {
+        Path publicKey = createSecretFile(secret.orgName(), secret.secretName() + ".pub");
+        Path privateKey = createSecretFile(secret.orgName(), secret.secretName());
+
+        Files.copy(keyPair.publicKey(), publicKey);
+        Files.copy(keyPair.privateKey(), privateKey);
+
+        return SecretCreationResult.builder()
+                .id(UUID.randomUUID())
+                .build();
+    }
+
+    @Override
+    public SecretCreationResult createUsernamePassword(SecretParams secret, UsernamePassword usernamePassword) throws Exception {
+        Path path = createSecretFile(secret.orgName(), secret.secretName());
+
+        Map<String, Object> creds = new HashMap<>();
+        creds.put("username", usernamePassword.username());
+        creds.put("password", usernamePassword.password());
+
+        om.writeValue(path.toFile(), creds);
+
+        return SecretCreationResult.builder()
+                .id(UUID.randomUUID())
+                .build();
+    }
+
+    @Override
+    public SecretCreationResult createData(SecretParams secret, byte[] data) throws Exception {
+        Path path = createSecretFile(secret.orgName(), secret.secretName());
+
+        Files.write(path, data);
+
+        return SecretCreationResult.builder()
+                .id(UUID.randomUUID())
+                .build();
+    }
+
+    private Path assertSecret(String orgName, String secretName) {
+        Path secretPath = toSecretPath(orgName, secretName);
+        if (Files.notExists(secretPath)) {
+            throw new RuntimeException("Secret '" + secretPath + "' not found");
+        }
+        return secretPath;
+    }
+
+    private Path createSecretFile(String orgName, String secretName) throws IOException {
+        Path path = toSecretPath(orgName, secretName);
+
+        if (Files.exists(path)) {
+            throw new RuntimeException("Secret '" + orgName + "/" + secretName + "' ('" + path + "') already exists");
+        }
+
+        if (Files.notExists(path.getParent())) {
+            Files.createDirectories(path.getParent());
+        }
+
+        return path;
     }
 
     private Path toSecretPath(String orgName, String name) {

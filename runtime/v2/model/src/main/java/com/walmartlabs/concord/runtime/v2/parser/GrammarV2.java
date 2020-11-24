@@ -44,7 +44,7 @@ import static com.walmartlabs.concord.runtime.v2.parser.ExpressionGrammar.exprSh
 import static com.walmartlabs.concord.runtime.v2.parser.FlowCallGrammar.callFull;
 import static com.walmartlabs.concord.runtime.v2.parser.FormsGrammar.callForm;
 import static com.walmartlabs.concord.runtime.v2.parser.GrammarMisc.*;
-import static com.walmartlabs.concord.runtime.v2.parser.GroupGrammar.group;
+import static com.walmartlabs.concord.runtime.v2.parser.GroupOfStepsGrammar.group;
 import static com.walmartlabs.concord.runtime.v2.parser.LogGrammar.logStep;
 import static com.walmartlabs.concord.runtime.v2.parser.ParallelGrammar.parallelBlock;
 import static com.walmartlabs.concord.runtime.v2.parser.ReturnGrammar.returnStep;
@@ -179,7 +179,7 @@ public final class GrammarV2 {
     public static <K, V> Map<K, V> toMap(Seq<KV<K, V>> values) {
         Map<K, V> m = new LinkedHashMap<>();
         values.stream().forEach(kv -> m.put(kv.getKey(), kv.getValue()));
-        return m;
+        return Collections.unmodifiableMap(m);
     }
 
     private static Map<String, YamlValue> valueToMap(Seq<KV<String, YamlValue>> values) {
@@ -189,7 +189,7 @@ public final class GrammarV2 {
 
         Map<String, YamlValue> m = new LinkedHashMap<>();
         values.stream().forEach(kv -> m.put(kv.getKey(), kv.getValue()));
-        return m;
+        return Collections.unmodifiableMap(m);
     }
 
     private static void assertNotNull(YamlValue v) {

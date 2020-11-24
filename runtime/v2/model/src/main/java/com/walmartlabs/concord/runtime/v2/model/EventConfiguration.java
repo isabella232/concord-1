@@ -23,6 +23,7 @@ package com.walmartlabs.concord.runtime.v2.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.walmartlabs.concord.common.ConfigurationUtils;
 import org.immutables.value.Value;
 
 import java.io.Serializable;
@@ -65,16 +66,34 @@ public interface EventConfiguration extends Serializable {
         return true;
     }
 
+    /**
+     * Maximum allowed length of string values.
+     * The runtime truncates strings larger than {@link #truncateMaxStringLength()}.
+     *
+     * @return
+     */
     @Value.Default
     default int truncateMaxStringLength() {
         return 1024;
     }
 
+    /**
+     * Maximum allowed length of array (list) values.
+     * The runtime truncates arrays larger than {@link #truncateMaxArrayLength()}.
+     *
+     * @return
+     */
     @Value.Default
     default int truncateMaxArrayLength() {
         return 32;
     }
 
+    /**
+     * Maximum allowed depth of nested values.
+     * The runtime truncates references deeper than {@link #truncateMaxDepth()}.
+     *
+     * @return
+     */
     @Value.Default
     default int truncateMaxDepth() {
         return 10;
@@ -114,5 +133,19 @@ public interface EventConfiguration extends Serializable {
 
     static ImmutableEventConfiguration.Builder builder() {
         return ImmutableEventConfiguration.builder();
+    }
+
+    static EventConfiguration merge(EventConfiguration a, EventConfiguration b) {
+        return builder().from(a)
+                .recordTaskInVars(a.recordTaskInVars() || b.recordTaskInVars())
+                .truncateInVars(a.truncateInVars() || b.truncateInVars())
+                .truncateMaxStringLength(Math.max(a.truncateMaxArrayLength(), b.truncateMaxArrayLength()))
+                .truncateMaxArrayLength(Math.max(a.truncateMaxArrayLength(), b.truncateMaxArrayLength()))
+                .truncateMaxDepth(Math.max(a.truncateMaxDepth(), b.truncateMaxDepth()))
+                .recordTaskOutVars(a.recordTaskOutVars() || b.recordTaskInVars())
+                .truncateOutVars(a.truncateOutVars() || b.truncateOutVars())
+                .inVarsBlacklist(ConfigurationUtils.distinct(a.inVarsBlacklist(), b.inVarsBlacklist()))
+                .outVarsBlacklist(ConfigurationUtils.distinct(a.outVarsBlacklist(), b.outVarsBlacklist()))
+                .build();
     }
 }

@@ -111,7 +111,7 @@ public class ProcessResourceV2 implements Resource {
 
         ProcessEntry e = processQueueManager.get(processKey, includes);
         if (e == null) {
-            log.warn("get ['{}'] -> not found", instanceId);
+            log.warn("get ['{}'] -> not found", instanceId.toString().replaceAll("[\n\r]",""));
             throw new ConcordApplicationException("Process instance not found", Status.NOT_FOUND);
         }
 
@@ -167,7 +167,8 @@ public class ProcessResourceV2 implements Resource {
     @WithTimer
     public List<ProcessRequirementsEntry> listRequirements(@ApiParam @QueryParam("status") ProcessStatus processStatus,
                                                            @ApiParam @QueryParam("limit") @DefaultValue("30") int limit,
-                                                           @ApiParam @QueryParam("offset") @DefaultValue("0") int offset) {
+                                                           @ApiParam @QueryParam("offset") @DefaultValue("0") int offset,
+                                                           @Context UriInfo uriInfo) {
 
         if (limit <= 0) {
             throw new ValidationErrorsException("'limit' must be a positive number");
@@ -181,7 +182,7 @@ public class ProcessResourceV2 implements Resource {
             throw new ValidationErrorsException("'status' is required");
         }
 
-        return queueDao.listRequirements(processStatus, limit, offset);
+        return queueDao.listRequirements(processStatus, FilterUtils.parseDate("startAt", uriInfo), limit, offset);
     }
 
     /**

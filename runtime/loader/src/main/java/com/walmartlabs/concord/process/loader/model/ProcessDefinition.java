@@ -29,7 +29,7 @@ import java.util.Set;
 /**
  * Common interface for v1 and v2 process definitions.
  */
-public interface ProcessDefinition {
+public interface ProcessDefinition extends EffectiveProcessDefinitionProvider {
 
     String runtime();
 

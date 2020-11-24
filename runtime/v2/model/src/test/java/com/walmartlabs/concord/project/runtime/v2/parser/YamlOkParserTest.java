@@ -65,7 +65,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         // retry
         assertNotNull(t.getOptions().retry());
         assertEquals(1, t.getOptions().retry().times());
-        assertEquals(2, t.getOptions().retry().delay());
+        assertEquals(Duration.ofSeconds(2), t.getOptions().retry().delay());
         Map<String, Object> retryInput = new HashMap<>();
         retryInput.put("k", "retry-1");
         retryInput.put("k2", "retry-2");
@@ -73,7 +73,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         assertEquals(retryInput, t.getOptions().retry().input());
 
         // meta
-        assertMeta(t.getOptions());
+        assertMeta("Boo", t.getOptions());
     }
 
     // Full Call Flow Definition Test
@@ -106,7 +106,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         // retry
         assertNotNull(t.getOptions().retry());
         assertEquals(1, t.getOptions().retry().times());
-        assertEquals(2, t.getOptions().retry().delay());
+        assertEquals(Duration.ofSeconds(2), t.getOptions().retry().delay());
         Map<String, Object> retryInput = new HashMap<>();
         retryInput.put("k", "retry-1");
         retryInput.put("k2", "retry-2");
@@ -114,7 +114,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         assertEquals(retryInput, t.getOptions().retry().input());
 
         // meta
-        assertMeta(t.getOptions());
+        assertMeta("boo-call", t.getOptions());
     }
 
     // Snapshot Definition Test
@@ -160,7 +160,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         assertNull(errorStep.getOptions());
 
         // meta
-        assertMeta(t.getOptions());
+        assertMeta("expression-call", t.getOptions());
     }
 
     // Group of Steps Definition Test
@@ -185,7 +185,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         assertNull(errorStep.getOptions());
 
         // withItems
-        assertEquals("a", ((List<String>)t.getOptions().withItems().value()).get(0));
+        assertEquals("a", ((List<String>) t.getOptions().withItems().value()).get(0));
 
         // meta
         assertMeta(t.getOptions());
@@ -220,7 +220,8 @@ public class YamlOkParserTest extends AbstractParserTest {
 
         assertNotNull(pd.forms());
         assertEquals(1, pd.forms().size());
-        Form fd = pd.forms().items().get(0);
+        Form fd = pd.forms().get("myForm");
+        assertNotNull(fd);
         assertEquals("myForm", fd.name());
         assertNotNull(fd.location());
         assertNotNull(fd.fields());
@@ -235,11 +236,11 @@ public class YamlOkParserTest extends AbstractParserTest {
         Imports imports = pd.imports();
         assertNotNull(imports);
 
-        assertEquals(3, imports.items().size());
+        assertEquals(4, imports.items().size());
 
         Import i = imports.items().get(0);
         assertEquals("git", i.type());
-        Import.GitDefinition g = (Import.GitDefinition)i;
+        Import.GitDefinition g = (Import.GitDefinition) i;
         assertEquals("https://github.com/me/my_private_repo.git", g.url());
         assertEquals("test", g.name());
         assertEquals("1.2.3", g.version());
@@ -250,6 +251,7 @@ public class YamlOkParserTest extends AbstractParserTest {
 
         assertEquals("git", imports.items().get(1).type());
         assertEquals("mvn", imports.items().get(2).type());
+        assertEquals("dir", imports.items().get(3).type());
     }
 
     // Configuration Definition Test
@@ -257,7 +259,7 @@ public class YamlOkParserTest extends AbstractParserTest {
     public void test008() throws Exception {
         ProcessDefinition pd = load("008.yml");
 
-        ProcessConfiguration cfg = pd.configuration();
+        ProcessDefinitionConfiguration cfg = pd.configuration();
         assertNotNull(cfg);
 
         assertTrue(cfg.debug());
@@ -370,7 +372,7 @@ public class YamlOkParserTest extends AbstractParserTest {
         // retry
         assertNotNull(t.getOptions().retry());
         assertEquals(1, t.getOptions().retry().times());
-        assertEquals(2, t.getOptions().retry().delay());
+        assertEquals(Duration.ofSeconds(2), t.getOptions().retry().delay());
         Map<String, Object> retryInput = new HashMap<>();
         retryInput.put("k", "v");
         assertEquals(retryInput, t.getOptions().retry().input());
@@ -436,8 +438,39 @@ public class YamlOkParserTest extends AbstractParserTest {
         assertNotNull(t.getLocation());
     }
 
+    // Profiles
+    @Test
+    public void test019() throws Exception {
+        ProcessDefinition pd = load("019.yml");
+
+        assertTrue(pd.flows().isEmpty());
+        assertEquals(1, pd.profiles().size());
+
+        Profile p1 = pd.profiles().get("p1");
+        assertNotNull(p1);
+
+        // flows
+        assertEquals(1, p1.flows().size());
+        assertTrue(p1.flows().get("default").get(0) instanceof ReturnStep);
+
+        assertEquals(1, p1.forms().size());
+        assertNotNull(p1.forms().get("myForm"));
+        assertEquals(2, p1.forms().get("myForm").fields().size());
+
+        assertTrue(p1.configuration().debug());
+    }
+
     private static void assertMeta(StepOptions o) {
+        assertMeta(null, o);
+    }
+
+    private static void assertMeta(String stepName, StepOptions o) {
         assertNotNull(o.meta());
-        assertEquals(Collections.singletonMap("m1", (Serializable)"v1"), o.meta());
+        Map<String, Serializable> expected = new HashMap<>();
+        if (stepName != null) {
+            expected.put("segmentName", stepName);
+        }
+        expected.put("m1", "v1");
+        assertEquals(expected, o.meta());
     }
 }
